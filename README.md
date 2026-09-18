@@ -1,0 +1,219 @@
+# IT Helpdesk — Phase 1
+
+Internal IT support ticketing system. Next.js (App Router) + TypeScript + Tailwind +
+Supabase (Postgres, Auth, Storage). Authorisation is enforced by Postgres Row Level
+Security, not only by hiding menu items.
+
+## Stack
+
+| Layer | Choice |
+| --- | --- |
+| Framework | Next.js 15 App Router, React 19, TypeScript |
+| Styling | Tailwind CSS |
+| Database | Supabase Postgres |
+| Auth | Supabase Auth (email + password) |
+| Files | Supabase Storage, private bucket `ticket-attachments` |
+
+## Setup
+
+```bash
+npm install
+cp .env.local.example .env.local   # then fill in the values
+```
+
+`.env.local` needs:
+
+```text
+NEXT_PUBLIC_SUPABASE_URL=https://<ref>.supabase.co
+NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=sb_publishable_...   # or NEXT_PUBLIC_SUPABASE_ANON_KEY
+SUPABASE_SERVICE_ROLE_KEY=...        # server-only, never exposed to the browser
+SUPABASE_DB_URL=postgresql://...     # optional, only for `npm run db:push`
+```
+
+### Apply the database
+
+Either push from the CLI:
+
+```bash
+npm run db:push      # migrations + demo data
+npm run db:schema    # migrations only
+npm run db:bundle    # regenerate supabase/all_in_one_schema.sql from the migrations
+```
+
+Or paste `supabase/all_in_one_schema.sql` into the Supabase SQL editor. It already
+contains the migrations **and** `seed.sql`, and it is idempotent, so re-running it
+is safe. `db:bundle` rebuilds it, so the pasted file can never lag behind the
+migrations.
+
+### Run
+
+```bash
+npm run dev
+```
+
+Demo accounts (password `Password123!`):
+
+| Email | Role |
+| --- | --- |
+| `admin@helpdesk.test` | Admin |
+| `support1@helpdesk.test` | IT Support |
+| `support2@helpdesk.test` | IT Support |
+| `employee1@helpdesk.test` | Employee |
+| `employee2@helpdesk.test` | Employee |
+
+## Layout
+
+```text
+app/
+  (app)/            authenticated shell: dashboard, tickets, notifications, profile, admin
+  actions/          server actions (auth, tickets, notifications, admin)
+  login/            public sign-in
+components/
+  admin/ auth/ dashboard/ layout/ notifications/ profile/ tickets/ ui/
+lib/
+  supabase/         browser, server, admin (service-role) and middleware clients
+  auth.ts           session + role guards
+  constants.ts      status / priority / role metadata
+  navigation.ts     per-role sidebar definition
+  upload.ts         storage upload + signed URLs
+  validation.ts     zod schemas
+services/           every database query lives here, not in components
+types/              domain types + generated-style database types
+supabase/
+  migrations/       0001 schema, 0002 triggers, 0003 RLS, 0004 storage, 0005 stats,
+                    0006 API keys, 0007 Telegram, 0008 profile visibility
+  seed.sql          demo departments, categories, users, tickets
+```
+
+## Theme
+
+Dark by default, with a light mode the user can switch to from the header (and
+from the login page). The choice is stored in `localStorage` — it is a per-device
+display preference, not worth a column in `profiles`.
+
+Colours are named by **role**, never by appearance: `surface`, `ink`, `accent`,
+and the four status families. Each is a CSS custom property holding RGB channels,
+so Tailwind's opacity modifier keeps working (`bg-surface-muted/60`). `:root`
+carries the dark values and `html[data-theme="light"]` overrides them, which means
+a missing or unrecognised attribute still renders correctly instead of flashing
+white.
+
+Status badges go one step further: a state picks a **tone** by name (`open`,
+`progress`, `critical`, …) and `app/globals.css` maps that tone to a palette per
+theme. So no component carries a `dark:` variant, and a badge cannot drift out of
+sync with its siblings. `lib/constants.ts` stores the tone, not the classes.
+
+An inline script in `app/layout.tsx` applies the stored theme before first paint,
+so a light-theme user never sees a dark flash.
+
+```bash
+# no component should hard-code a palette colour or a dark: variant
+grep -rE 'dark:|(bg|text|border|ring|divide)-(red|amber|emerald|blue|slate|zinc|violet|orange|rose)-[0-9]{2,3}' app components
+```
+
+## Authorisation
+
+| Role | Tickets | Users | Categories | Activity |
+| --- | --- | --- | --- | --- |
+| `employee` | select/insert own, comment on own | own profile | read | own tickets |
+| `it_support` | select all, update all, comment | own profile + staff list | read | all |
+| `admin` | full | full | full | full |
+
+Guarantees:
+
+- Employees cannot read another employee's ticket by editing the URL — `tickets_select`
+  restricts rows, and `getTicketDetail` returns `notFound()` when RLS hides the row.
+- Comments and attachments are gated by `can_access_ticket()`.
+- `ticket_history` is read-only to clients; rows are written by `SECURITY DEFINER`
+  triggers so the audit log cannot be forged or erased.
+- Role, `is_active` and `department_id` changes are blocked by the
+  `guard_profile_privileges` trigger unless the caller is an admin.
+- Users are deactivated, never deleted, so tickets keep their references.
+- The service-role key is only read inside `lib/supabase/admin.ts` (`server-only`).
+
+## Ticket side effects
+
+Everything happens in the database so the Telegram bot and API share the same
+records:
+
+- `tickets` insert/update triggers write `ticket_history` rows and `notifications`.
+- `ticket_comments` insert triggers notify the counterparty (staff reply → requester,
+  requester reply → assignee or the whole bench).
+- `resolved_at` / `closed_at` are maintained by a trigger.
+- `notifications` insert queues a `notification_deliveries` row per channel.
+
+## Telegram bot (Phase 2)
+
+The bot is a second way to **open and follow tickets**, not a separate system: it
+writes to the same tables and is subject to the same RLS policies.
+
+```bash
+# .env.local
+TELEGRAM_BOT_TOKEN=123456:ABC...   # or BOT_TELE=...
+TELEGRAM_WEBHOOK_SECRET=<random>
+DISPATCH_SECRET=<random>
+NEXT_PUBLIC_TELEGRAM_BOT_USERNAME=bian_it_bot
+```
+
+```bash
+npm run telegram:setup https://your-app.example.com   # register webhook
+npm run telegram:info                                 # check status
+npm run telegram:poll                                 # local dev, no tunnel
+```
+
+Users link from **Profile → Telegram** (a 15-minute single-use code, sent to the
+bot as `/start CODE`), then `/new` walks them through category → title →
+description → priority. Screenshots are re-uploaded into the same private
+Supabase bucket, and every ticket change is pushed back as a notification.
+
+Why the bot cannot over-reach: every ticket query runs through `asUser(userId)`
+in `lib/db/pool.ts`, which opens a transaction with
+`set local role authenticated` and a `request.jwt.claims` payload for the linked
+profile. `auth.uid()` resolves to that user, so the policies in `0003_rls.sql`
+apply unchanged — an employee cannot read another employee's ticket through the
+bot any more than through the browser.
+
+See [docs/TELEGRAM.md](docs/TELEGRAM.md).
+
+## REST API (Phase 2)
+
+Every user can mint an API key in **Profile → API Keys** and call the system from
+scripts, cron jobs, n8n, or an AI tool.
+
+```bash
+curl -s -H "Authorization: Bearer itk_..." https://your-app/api/v1/me
+```
+
+A key is not a super-account: it acts as its owner. Each request runs inside a
+transaction with `set local role authenticated` and a `request.jwt.claims`
+payload, so `auth.uid()` resolves to the key's owner and **every RLS policy still
+applies**. An employee key can read its own tickets and nothing else; a typo in
+the SQL rules changes the API behaviour without a deploy, because there is no
+second permission list to drift.
+
+`GET /api/v1` describes the whole surface, including enum values and example
+payloads, so a tool can discover it without reading the source. Responses carry
+`requester.email` because that is the identity external systems map onto.
+
+```
+GET    /api/v1                      self-describing index
+GET    /api/v1/me                   identity, permissions, stats
+GET    /api/v1/meta                 categories, departments, counters
+GET    /api/v1/users                directory, scoped by RLS
+GET    /api/v1/tickets              list + filter + paginate
+POST   /api/v1/tickets              create
+GET    /api/v1/tickets/{number}     detail
+PATCH  /api/v1/tickets/{number}     status, priority, assignee
+GET    /api/v1/tickets/{number}/comments
+POST   /api/v1/tickets/{number}/comments
+```
+
+See [docs/API.md](docs/API.md).
+
+## Future phases
+
+- **Phase 3** Asset management. `devices` table is created and locked to admins.
+- **Phase 4** Remote support. `remote_sessions` links `ticket → device → operator`.
+
+Nothing in Phase 1 depends on web-only assumptions: the ticket model, history and
+notifications are plain relational data.

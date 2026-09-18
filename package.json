@@ -1,0 +1,43 @@
+{
+  "name": "it-helpdesk",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "typecheck": "tsc --noEmit",
+    "db:push": "node scripts/db-push.mjs",
+    "db:schema": "node scripts/db-push.mjs --schema",
+    "db:bundle": "node scripts/build-schema.mjs",
+    "verify": "node scripts/verify.mjs",
+    "telegram:setup": "node scripts/telegram-setup.mjs",
+    "telegram:info": "node scripts/telegram-setup.mjs --info",
+    "telegram:delete": "node scripts/telegram-setup.mjs --delete",
+    "telegram:poll": "node scripts/telegram-poll.mjs"
+  },
+  "dependencies": {
+    "@supabase/ssr": "^0.7.0",
+    "@supabase/supabase-js": "^2.58.0",
+    "clsx": "^2.1.1",
+    "date-fns": "^4.1.0",
+    "lucide-react": "^0.545.0",
+    "next": "^15.5.4",
+    "pg": "^8.23.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "tailwind-merge": "^3.3.1",
+    "zod": "^4.1.11"
+  },
+  "devDependencies": {
+    "@types/node": "^24.5.2",
+    "@types/pg": "^8.23.1",
+    "@types/react": "^19.1.13",
+    "@types/react-dom": "^19.1.9",
+    "autoprefixer": "^10.4.21",
+    "postcss": "^8.5.6",
+    "tailwindcss": "^3.4.17",
+    "typescript": "^5.9.2"
+  }
+}

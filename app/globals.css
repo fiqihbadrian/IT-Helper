@@ -1,0 +1,330 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* =============================================================================
+   Theme tokens
+
+   Colours are named by role (surface, ink, accent) rather than by appearance,
+   so a component never has to know which theme is active. Each token holds
+   space-separated RGB channels so Tailwind's opacity modifier keeps working:
+   `bg-surface-muted/60` becomes `rgb(var(--surface-muted) / 0.6)`.
+
+   Dark is the default — `:root` carries the dark values and light is the
+   override. That way a missing or unrecognised `data-theme` still renders
+   correctly instead of flashing white.
+   ============================================================================= */
+@layer base {
+  :root {
+    color-scheme: dark;
+
+    --surface: 22 25 30;
+    --surface-muted: 13 15 18;
+    --surface-border: 38 43 51;
+
+    --ink: 232 234 237;
+    --ink-muted: 154 163 175;
+    --ink-subtle: 110 118 129;
+
+    --accent: 59 130 246;
+    --accent-hover: 37 99 235;
+    --accent-soft: 27 36 52;
+
+    --danger: 239 68 68;
+    --danger-ink: 248 113 113;
+    --danger-soft: 58 22 24;
+    --danger-border: 127 29 29;
+
+    --success: 16 185 129;
+    --success-ink: 110 231 183;
+    --success-soft: 15 42 32;
+    --success-border: 22 101 52;
+
+    --warning: 245 158 11;
+    --warning-ink: 252 211 77;
+    --warning-soft: 51 38 15;
+    --warning-border: 146 64 14;
+
+    --info: 59 130 246;
+    --info-ink: 147 197 253;
+    --info-soft: 18 35 63;
+    --info-border: 30 64 175;
+  }
+
+  html[data-theme="light"] {
+    color-scheme: light;
+
+    --surface: 255 255 255;
+    --surface-muted: 246 247 249;
+    --surface-border: 228 230 234;
+
+    --ink: 17 24 39;
+    --ink-muted: 107 114 128;
+    --ink-subtle: 156 163 175;
+
+    --accent: 31 94 255;
+    --accent-hover: 26 79 214;
+    --accent-soft: 238 243 255;
+
+    --danger: 239 68 68;
+    --danger-ink: 185 28 28;
+    --danger-soft: 254 242 242;
+    --danger-border: 254 202 202;
+
+    --success: 16 185 129;
+    --success-ink: 4 120 87;
+    --success-soft: 236 253 245;
+    --success-border: 167 243 208;
+
+    --warning: 245 158 11;
+    --warning-ink: 146 64 14;
+    --warning-soft: 255 251 235;
+    --warning-border: 253 230 138;
+
+    --info: 59 130 246;
+    --info-ink: 29 78 216;
+    --info-soft: 239 246 255;
+    --info-border: 191 219 254;
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    @apply bg-surface-muted text-ink antialiased;
+  }
+
+  * {
+    @apply border-surface-border;
+  }
+
+  :focus-visible {
+    @apply outline-none ring-2 ring-accent ring-offset-1 ring-offset-surface;
+  }
+}
+
+/* =============================================================================
+   Status tones
+
+   Badges encode a state, not a colour. The state picks a tone by name and the
+   tone supplies its own palette for the active theme, so a badge never needs a
+   `dark:` twin and cannot drift out of sync with its siblings.
+   ============================================================================= */
+@layer base {
+  [data-tone] {
+    --tone-bg: #1b2027;
+    --tone-fg: #cbd5e1;
+    --tone-ring: #333c48;
+    --tone-dot: #94a3b8;
+  }
+
+  [data-tone="open"],
+  [data-tone="low"],
+  [data-tone="employee"] {
+    --tone-bg: #1b2027;
+    --tone-fg: #cbd5e1;
+    --tone-ring: #333c48;
+    --tone-dot: #94a3b8;
+  }
+
+  [data-tone="closed"] {
+    --tone-bg: #191c21;
+    --tone-fg: #8b93a1;
+    --tone-ring: #2c3138;
+    --tone-dot: #71717a;
+  }
+
+  [data-tone="assigned"],
+  [data-tone="support"] {
+    --tone-bg: #12233f;
+    --tone-fg: #93c5fd;
+    --tone-ring: #1e3a6b;
+    --tone-dot: #3b82f6;
+  }
+
+  [data-tone="medium"] {
+    --tone-bg: #0d2a3a;
+    --tone-fg: #7dd3fc;
+    --tone-ring: #155e75;
+    --tone-dot: #0ea5e9;
+  }
+
+  [data-tone="progress"] {
+    --tone-bg: #33260f;
+    --tone-fg: #fcd34d;
+    --tone-ring: #6b4a12;
+    --tone-dot: #f59e0b;
+  }
+
+  [data-tone="waiting"] {
+    --tone-bg: #251a3d;
+    --tone-fg: #c4b5fd;
+    --tone-ring: #4c3a80;
+    --tone-dot: #8b5cf6;
+  }
+
+  [data-tone="resolved"] {
+    --tone-bg: #0f2a20;
+    --tone-fg: #6ee7b7;
+    --tone-ring: #1c5138;
+    --tone-dot: #10b981;
+  }
+
+  [data-tone="high"] {
+    --tone-bg: #351d0f;
+    --tone-fg: #fdba74;
+    --tone-ring: #7c3a12;
+    --tone-dot: #f97316;
+  }
+
+  [data-tone="critical"] {
+    --tone-bg: #3a1618;
+    --tone-fg: #fca5a5;
+    --tone-ring: #7f1d1d;
+    --tone-dot: #ef4444;
+  }
+
+  [data-tone="admin"] {
+    --tone-bg: #e4e4e7;
+    --tone-fg: #18181b;
+    --tone-ring: #e4e4e7;
+    --tone-dot: #e4e4e7;
+  }
+
+  html[data-theme="light"] [data-tone="open"],
+  html[data-theme="light"] [data-tone="low"],
+  html[data-theme="light"] [data-tone="employee"] {
+    --tone-bg: #f1f5f9;
+    --tone-fg: #334155;
+    --tone-ring: #e2e8f0;
+    --tone-dot: #94a3b8;
+  }
+
+  html[data-theme="light"] [data-tone="closed"] {
+    --tone-bg: #f4f4f5;
+    --tone-fg: #52525b;
+    --tone-ring: #e4e4e7;
+    --tone-dot: #a1a1aa;
+  }
+
+  html[data-theme="light"] [data-tone="assigned"],
+  html[data-theme="light"] [data-tone="support"] {
+    --tone-bg: #eff6ff;
+    --tone-fg: #1d4ed8;
+    --tone-ring: #bfdbfe;
+    --tone-dot: #3b82f6;
+  }
+
+  html[data-theme="light"] [data-tone="medium"] {
+    --tone-bg: #f0f9ff;
+    --tone-fg: #0369a1;
+    --tone-ring: #bae6fd;
+    --tone-dot: #0ea5e9;
+  }
+
+  html[data-theme="light"] [data-tone="progress"] {
+    --tone-bg: #fffbeb;
+    --tone-fg: #92400e;
+    --tone-ring: #fde68a;
+    --tone-dot: #f59e0b;
+  }
+
+  html[data-theme="light"] [data-tone="waiting"] {
+    --tone-bg: #f5f3ff;
+    --tone-fg: #6d28d9;
+    --tone-ring: #ddd6fe;
+    --tone-dot: #8b5cf6;
+  }
+
+  html[data-theme="light"] [data-tone="resolved"] {
+    --tone-bg: #ecfdf5;
+    --tone-fg: #047857;
+    --tone-ring: #a7f3d0;
+    --tone-dot: #10b981;
+  }
+
+  html[data-theme="light"] [data-tone="high"] {
+    --tone-bg: #fff7ed;
+    --tone-fg: #c2410c;
+    --tone-ring: #fed7aa;
+    --tone-dot: #f97316;
+  }
+
+  html[data-theme="light"] [data-tone="critical"] {
+    --tone-bg: #fef2f2;
+    --tone-fg: #b91c1c;
+    --tone-ring: #fecaca;
+    --tone-dot: #ef4444;
+  }
+
+  html[data-theme="light"] [data-tone="admin"] {
+    --tone-bg: #18181b;
+    --tone-fg: #ffffff;
+    --tone-ring: #18181b;
+    --tone-dot: #18181b;
+  }
+}
+
+@layer components {
+  .card {
+    @apply rounded-card border border-surface-border bg-surface;
+  }
+
+  .label {
+    @apply mb-1.5 block text-[13px] font-medium text-ink;
+  }
+
+  .input {
+    @apply block w-full rounded-md border border-surface-border bg-surface px-3 py-2 text-sm text-ink
+      placeholder:text-ink-subtle focus:border-accent focus:ring-1 focus:ring-accent;
+  }
+
+  .btn {
+    @apply inline-flex select-none items-center justify-center gap-2 rounded-md px-3.5 py-2 text-sm
+      font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50;
+  }
+
+  .btn-primary {
+    @apply btn bg-accent text-white hover:bg-accent-hover;
+  }
+
+  .btn-secondary {
+    @apply btn border border-surface-border bg-surface text-ink hover:bg-surface-muted;
+  }
+
+  .btn-ghost {
+    @apply btn text-ink-muted hover:bg-surface-muted hover:text-ink;
+  }
+
+  .btn-danger {
+    @apply btn border border-danger-border bg-surface text-danger-ink hover:bg-danger-soft;
+  }
+
+  .tone {
+    background-color: var(--tone-bg);
+    color: var(--tone-fg);
+    --tw-ring-color: var(--tone-ring);
+  }
+
+  .tone-dot {
+    background-color: var(--tone-dot);
+  }
+
+  .table-base {
+    @apply w-full border-collapse text-left text-sm;
+  }
+
+  .table-base thead th {
+    @apply border-b border-surface-border bg-surface-muted px-4 py-2.5 text-xs font-semibold
+      uppercase tracking-wide text-ink-muted;
+  }
+
+  .table-base tbody td {
+    @apply border-b border-surface-border px-4 py-3 align-middle;
+  }
+
+  .table-base tbody tr:hover {
+    @apply bg-surface-muted/60;
+  }
+}
