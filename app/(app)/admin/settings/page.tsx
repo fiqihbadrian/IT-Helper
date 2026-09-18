@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 
 import { Card, CardHeader, PageHeader } from "@/components/ui/Card";
 import { requireAdmin } from "@/lib/auth";
+import { describeDatabaseRoute, isCloudflareRuntime } from "@/lib/db/pool";
 import { telegramConfigured } from "@/lib/env";
 import { createClient } from "@/lib/supabase/server";
 import { getDashboardStats } from "@/services/tickets";
@@ -19,6 +20,8 @@ export default async function AdminSettingsPage() {
     listAllCategories(supabase),
     getDashboardStats(supabase),
   ]);
+  const database = describeDatabaseRoute();
+  const onWorkers = isCloudflareRuntime();
 
   return (
     <>
@@ -52,6 +55,33 @@ export default async function AdminSettingsPage() {
             <Row label="Visibility">Private (signed URLs)</Row>
             <Row label="Max file size">10 MB</Row>
             <Row label="Signed URL lifetime">60 minutes</Row>
+          </dl>
+        </Card>
+
+        <Card>
+          <CardHeader
+            title="Runtime"
+            description="Where the app runs and how it reaches Postgres."
+          />
+          <dl className="divide-y divide-surface-border text-[13px]">
+            <Row label="Platform">
+              {onWorkers ? "Cloudflare Workers" : "Node.js"}
+            </Row>
+            <Row label="Database route">
+              {database.kind === "hyperdrive" ? "Hyperdrive" : "Direct pool"}
+            </Row>
+            <Row label="Database host">
+              <span className="font-mono">{database.host}</span>
+            </Row>
+            <Row label="Query cache">
+              {database.kind === "hyperdrive" ? (
+                <span className="text-ink-muted">
+                  Disabled — required, the cache key ignores row-level security
+                </span>
+              ) : (
+                <span className="text-ink-muted">Not applicable</span>
+              )}
+            </Row>
           </dl>
         </Card>
 

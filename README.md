@@ -166,6 +166,22 @@ bot as `/start CODE`), then `/new` walks them through category → title →
 description → priority. Screenshots are re-uploaded into the same private
 Supabase bucket, and every ticket change is pushed back as a notification.
 
+The ☰ menu is role-aware. Telegram has no notion of a role, so the split is
+expressed with command *scopes*: one `default` list of 7 commands that everyone
+inherits, plus a per-chat override of 13 installed against the `chat_id` of each
+IT staff member. That is how `/queue`, `/open`, `/unassigned`, `/find`,
+`/claim` and `/close` exist without an extra screen. `lib/telegram/menu.ts` owns
+the lists and the bot installs them itself, so there is no second copy to drift:
+
+```bash
+node scripts/telegram-setup.mjs --menus 8620947265   # what Telegram holds
+```
+
+A menu is presentation, not a permission system. Staff-only commands are checked
+again in `commands.ts`, and RLS has the final word — an employee typing `/queue`
+is refused before a query is ever sent. Replies can be sent as a command
+(`/reply IT-000004 pesan`) so a plain message is never mistaken for a reply.
+
 Why the bot cannot over-reach: every ticket query runs through `asUser(userId)`
 in `lib/db/pool.ts`, which opens a transaction with
 `set local role authenticated` and a `request.jwt.claims` payload for the linked
@@ -209,6 +225,43 @@ POST   /api/v1/tickets/{number}/comments
 ```
 
 See [docs/API.md](docs/API.md).
+
+## Deploy (Cloudflare Workers)
+
+Web app, REST API and the Telegram bot all ship as one Worker.
+
+```text
+https://it-helpdesk.fiqihbadrian.workers.dev
+```
+
+```bash
+npm run cf:deploy    # build + deploy
+npm run cf:preview   # run the Worker locally on :8787
+npm run cf:build     # build only
+```
+
+Two things make this work and both are easy to get wrong:
+
+**The database goes through Hyperdrive, and its query cache is off.** Workers cannot
+open a plain TCP connection, so `pg` talks to the `HYPERDRIVE` binding instead of
+`SUPABASE_DB_URL`. Caching is disabled on purpose: Hyperdrive's cache key is the SQL
+text plus parameters and knows nothing about `set local role` / `request.jwt.claims`.
+With caching on, two users running the same statement would share a cache entry and
+read each other's rows. Supabase's direct `db.<ref>` host is IPv6-only and out of
+reach from Hyperdrive, so the connection string uses the Tokyo pooler.
+
+**`lib/db/pool.ts` has two backends behind one API.** On Node it keeps a shared
+`pg.Pool`; on Workers it opens one `pg.Client` per call, because Workers forbid I/O
+across request contexts and a global pool would hand out sockets from a finished
+request. Callers only ever see `asUser()` / `asSystem()`.
+
+Secrets (`SUPABASE_SERVICE_ROLE_KEY`, `TELEGRAM_BOT_TOKEN`,
+`TELEGRAM_WEBHOOK_SECRET`, `DISPATCH_SECRET`) live in the Cloudflare dashboard;
+`NEXT_PUBLIC_*` values live in `wrangler.jsonc` because they are public anyway.
+After a deploy the Telegram webhook must be re-registered once — it is per bot
+token and Cloudflare knows nothing about Telegram.
+
+See [docs/DEPLOY.md](docs/DEPLOY.md).
 
 ## Future phases
 

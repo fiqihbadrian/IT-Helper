@@ -152,3 +152,36 @@ export function getMe() {
 export function getWebhookInfo() {
   return call<Record<string, unknown>>("getWebhookInfo", {});
 }
+
+/* -------------------------------------------------------------------------- */
+/* Command menu                                                                */
+/* -------------------------------------------------------------------------- */
+
+/** Telegram caps descriptions at 256 characters and lists at 100 entries. */
+export interface BotCommand {
+  command: string;
+  description: string;
+}
+
+/**
+ * Telegram has no concept of our roles, so a role-specific menu is expressed as
+ * a scope: `default` is what everyone sees, and `chat` overrides it for one
+ * conversation. Staff get the longer list installed against their own chat_id.
+ */
+export type BotCommandScope =
+  | { type: "default" }
+  | { type: "all_private_chats" }
+  | { type: "chat"; chat_id: number | string };
+
+export function setMyCommands(commands: BotCommand[], scope?: BotCommandScope) {
+  return call<boolean>("setMyCommands", { commands, scope });
+}
+
+/** Drops a scope's override; the `default` list takes over again. */
+export function deleteMyCommands(scope?: BotCommandScope) {
+  return call<boolean>("deleteMyCommands", { scope });
+}
+
+export function getMyCommands(scope?: BotCommandScope) {
+  return call<BotCommand[]>("getMyCommands", { scope });
+}

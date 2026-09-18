@@ -64,6 +64,37 @@ if (args.includes("--delete")) {
   process.exit(0);
 }
 
+/**
+ * The ☰ command menu is not installed from here: `lib/telegram/menu.ts` owns the
+ * lists and the bot registers them itself, so there is no second copy to drift.
+ * This flag only reports what Telegram currently holds.
+ *
+ *   node scripts/telegram-setup.mjs --menus            # the fallback list
+ *   node scripts/telegram-setup.mjs --menus 8620947265 # one chat's override
+ */
+if (args.includes("--menus")) {
+  const chatId = args.find((arg) => /^-?\d+$/.test(arg));
+
+  const show = (label, commands) => {
+    console.log(`\n${label} (${commands.length})`);
+    for (const item of commands) console.log(`  /${item.command.padEnd(12)} ${item.description}`);
+    if (!commands.length) console.log("  (kosong)");
+  };
+
+  show("default — dipakai semua orang", await call("getMyCommands", { scope: { type: "default" } }));
+
+  if (chatId) {
+    show(
+      `chat ${chatId} — override`,
+      await call("getMyCommands", { scope: { type: "chat", chat_id: Number(chatId) } }),
+    );
+  } else {
+    console.log("\nTip: tambahkan chat_id untuk melihat override per chat.");
+  }
+
+  process.exit(0);
+}
+
 const baseUrl = args.find((arg) => !arg.startsWith("--")) ?? process.env.NEXT_PUBLIC_APP_URL;
 if (!baseUrl || baseUrl.includes("localhost")) {
   console.error(

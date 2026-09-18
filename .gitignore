@@ -2,6 +2,10 @@ node_modules
 .next
 out
 build
+.open-next
+.wrangler
+.dev.vars
+cloudflare-env.d.ts
 .DS_Store
 *.pem
 npm-debug.log*

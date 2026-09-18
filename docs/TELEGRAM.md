@@ -103,18 +103,66 @@ Untuk memutus: `/unlink` di bot, atau tombol di halaman profil.
 
 ## Perintah
 
+Menu perintah di Telegram (tombol ☰) berbeda menurut peran. Telegram sendiri tidak
+tahu apa itu role, jadi ini diungkapkan lewat **scope**: satu daftar `default` yang
+dipakai semua orang, plus override per-chat yang dipasang ke `chat_id` masing-masing
+anggota tim IT.
+
 | Perintah | Siapa | Fungsi |
 | --- | --- | --- |
 | `/start` | semua | Sambutan / penautan dengan kode |
 | `/new` | semua | Buat tiket, bertahap: kategori → judul → deskripsi → prioritas |
-| `/tickets` | semua | 10 tiket yang terakhir diperbarui |
+| `/tickets` | semua | 10 tiket milik sendiri yang terakhir diperbarui |
 | `/ticket IT-000004` | semua | Detail satu tiket + 4 percakapan terakhir |
-| `/status` | semua | Ringkasan jumlah tiket |
+| `/reply IT-000004 pesan` | semua | Balas tiket langsung dari chat |
+| `/status` | semua | Ringkasan akun (tim IT dapat tambahan hitungan antrean) |
 | `/unlink` | semua | Putuskan akun Telegram |
-| `/help` | semua | Daftar perintah |
+| `/help` | semua | Daftar perintah, sesuai peran |
+| `/queue` | tim IT | Semua tiket, terbaru dulu |
+| `/open` | tim IT | Tiket yang belum `RESOLVED`/`CLOSED` |
+| `/unassigned` | tim IT | Tiket yang belum punya penanggung jawab |
+| `/find printer` | tim IT | Cari berdasarkan nomor tiket atau judul |
+| `/claim IT-000004` | tim IT | Tugaskan tiket ke diri sendiri |
+| `/close IT-000004` | tim IT | Tutup tiket |
 
 Di setiap tiket ada tombol inline: **Balas**, **Segarkan**, dan untuk tim IT
 tambahan **Ambil tiket ini** serta tombol ubah status.
+
+Karyawan melihat **7** perintah; tim IT melihat **13**. Untuk memeriksa apa yang
+sebenarnya terpasang di Telegram:
+
+```bash
+node scripts/telegram-setup.mjs --menus              # daftar default
+node scripts/telegram-setup.mjs --menus 8620947265   # override satu chat
+```
+
+Daftar perintah **tidak** didaftarkan dari script. Sumbernya hanya satu,
+`lib/telegram/menu.ts`, dan bot memasangnya sendiri: daftar default di-refresh
+sekali per isolate saat update pertama masuk, sedangkan override per-chat dipasang
+saat `/start`, `/help`, dan selesai menautkan akun. Jadi tidak ada salinan kedua
+yang bisa melenceng dari kode.
+
+> **Menu itu bukan sistem izin.** Tampilan saja. Setiap perintah tim IT masih
+> diperiksa ulang di `commands.ts` (`STAFF_ONLY`), dan RLS tetap penentu akhir —
+> karyawan yang mengetik `/queue` ditolak sebelum menyentuh database.
+
+Karyawan melihat 7 entri karena `/start` sengaja tidak dipasang di menu: perintah
+itu tetap bekerja, tapi tempatnya di pesan sambutan, bukan di daftar yang bisa
+ditekan kapan saja.
+
+Konsekuensinya: setelah peran seseorang diubah di web, menu Telegram-nya masih
+lama sampai ia mengirim `/start` atau `/help` sekali. Tidak ada yang memberi tahu
+bot saat peran berubah, jadi dua perintah itu yang memaksa bot melihat ulang.
+`/unlink` menghapus override-nya, supaya mantan anggota tim IT tidak menyimpan menu
+berisi perintah yang sudah tidak bisa dijalankan.
+
+### Balas lewat perintah, bukan lewat pesan berikutnya
+
+Tombol **Balas** masih membuka mode "pesan berikutnya langsung dikirim sebagai
+balasan", karena itu nyaman untuk balasan panjang. Tapi `/reply IT-000004 pesan`
+ada supaya pesan biasa tidak pernah salah ditafsirkan sebagai balasan. Kalau kamu
+mengetik `/reply` sementara mode balas sedang terbuka, mode itu ditutup — kalau
+tidak, pesan berikutnya akan ikut terkirim sebagai balasan.
 
 ### Screenshot
 

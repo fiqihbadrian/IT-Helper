@@ -108,6 +108,112 @@ export async function findTicketByNumber(userId: string, number: string) {
   );
 }
 
+/* -------------------------------------------------------------------------- */
+/* Staff queue                                                                 */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * What a staff member can ask to see. None of these filters grant anything:
+ * the `tickets_select` policy already decides that only staff can read tickets
+ * they did not raise, so an employee running `/queue` simply gets their own
+ * rows back.
+ */
+export type StaffQueue = "all" | "open" | "unassigned" | "mine";
+
+const QUEUE_FILTER: Record<StaffQueue, string> = {
+  all: "true",
+  open: "t.status not in ('RESOLVED', 'CLOSED')",
+  unassigned: "t.assigned_to is null and t.status not in ('RESOLVED', 'CLOSED')",
+  mine: "t.assigned_to = $2",
+};
+
+export async function listQueue(userId: string, queue: StaffQueue, limit = 10) {
+  return asUser(userId, async (db) => {
+    const filter = QUEUE_FILTER[queue];
+    const params: unknown[] = queue === "mine" ? [limit, userId] : [limit];
+
+    const { rows } = await db.query<BotTicketRow>(
+      `${SELECT_TICKET} where ${filter} order by t.updated_at desc limit $1`,
+      params,
+    );
+    return rows;
+  });
+}
+
+/** Matches on ticket number or title; RLS still decides what is reachable. */
+export async function searchTickets(userId: string, query: string, limit = 10) {
+  return asUser(userId, async (db) => {
+    const { rows } = await db.query<BotTicketRow>(
+      `${SELECT_TICKET}
+        where t.ticket_number ilike $2 or t.title ilike $2
+        order by t.updated_at desc
+        limit $1`,
+      [limit, `%${query}%`],
+    );
+    return rows;
+  });
+}
+
+/* -------------------------------------------------------------------------- */
+/* Actions addressed by ticket number                                          */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Each of these does its lookup and its write in a *single* transaction, so the
+ * row it just changed is the row it reads back. Splitting them into
+ * `findTicketByNumber` + a separate mutation would nest `asUser` inside
+ * `asUser` and the read-back would see nothing.
+ */
+export async function commentByNumber(userId: string, number: string, message: string) {
+  return asUser(userId, async (db) => {
+    const ticket = await selectTicket(db, "upper(t.ticket_number) = upper($1) limit 1", [number]);
+    if (!ticket) return null;
+
+    await db.query(
+      `insert into public.ticket_comments (ticket_id, user_id, message) values ($1, $2, $3)`,
+      [ticket.id, userId, message],
+    );
+
+    return ticket;
+  });
+}
+
+/** Staff-only in practice: `tickets_update` requires `is_staff()`. */
+export async function claimByNumber(userId: string, number: string) {
+  return asUser(userId, async (db) => {
+    const ticket = await selectTicket(db, "upper(t.ticket_number) = upper($1) limit 1", [number]);
+    if (!ticket) return null;
+
+    const { rows } = await db.query<{ id: string }>(
+      `update public.tickets set assigned_to = $2 where id = $1 returning id`,
+      [ticket.id, userId],
+    );
+    if (!rows[0]) return null;
+
+    return selectTicket(db, "t.id = $1", [ticket.id]);
+  });
+}
+
+/** Staff-only in practice: `tickets_update` requires `is_staff()`. */
+export async function setStatusByNumber(
+  userId: string,
+  number: string,
+  status: TicketStatus,
+) {
+  return asUser(userId, async (db) => {
+    const ticket = await selectTicket(db, "upper(t.ticket_number) = upper($1) limit 1", [number]);
+    if (!ticket) return null;
+
+    const { rows } = await db.query<{ id: string }>(
+      `update public.tickets set status = $2 where id = $1 returning id`,
+      [ticket.id, status],
+    );
+    if (!rows[0]) return null;
+
+    return selectTicket(db, "t.id = $1", [ticket.id]);
+  });
+}
+
 export interface BotComment {
   author: string;
   is_staff: boolean;

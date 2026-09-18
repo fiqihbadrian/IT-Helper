@@ -22,34 +22,72 @@ import {
 import {
   addComment,
   claimTicket,
+  claimByNumber,
+  commentByNumber,
   createTicket,
   findTicketById,
   findTicketByNumber,
   listCategories,
   listComments,
   listMyTickets,
+  listQueue,
+  searchTickets,
+  setStatusByNumber,
   ticketKeyboard,
   updateTicketStatus,
   type BotTicketRow,
+  type StaffQueue,
 } from "@/lib/telegram/tickets";
+import {
+  ensureDefaultCommands,
+  isStaffRole,
+  refreshCommandMenu,
+} from "@/lib/telegram/menu";
 import { attachPhoto } from "@/lib/telegram/attachments";
 import type { TicketPriority, TicketStatus } from "@/types";
 
-const HELP = [
-  "*IT Helpdesk bot*",
-  "",
-  "*Open a ticket*",
-  "`/new` — report a problem, step by step",
-  "",
-  "*Your tickets*",
-  "`/tickets` — 10 most recently updated",
-  "`/ticket IT-000004` — one ticket with its conversation",
-  "",
-  "*Account*",
-  "`/status` — link status and your ticket counts",
-  "`/unlink` — disconnect this Telegram account",
-  "`/help` — this message",
-].join("\n");
+/**
+ * Commands the ☰ menu only shows to IT staff, and which are refused for anyone
+ * else. The menu is presentation; this set is the guard; RLS is the enforcement.
+ */
+const STAFF_ONLY = new Set(["queue", "open", "unassigned", "find", "claim", "close"]);
+
+function helpText(role: string) {
+  const lines = [
+    "*IT Helpdesk bot*",
+    "",
+    "*Buat tiket*",
+    "`/new` — laporkan masalah, langkah demi langkah",
+    "",
+    "*Tiket kamu*",
+    "`/tickets` — 10 tiket terakhir milikmu",
+    "`/ticket IT-000004` — satu tiket beserta percakapannya",
+    "`/reply IT-000004 pesan` — balas langsung dari sini",
+  ];
+
+  if (isStaffRole(role)) {
+    lines.push(
+      "",
+      "*Antrean tim IT*",
+      "`/queue` — semua tiket",
+      "`/open` — tiket yang belum selesai",
+      "`/unassigned` — tiket yang belum ditangani",
+      "`/find printer` — cari nomor atau judul",
+      "`/claim IT-000004` — ambil tiket",
+      "`/close IT-000004` — tutup tiket",
+    );
+  }
+
+  lines.push(
+    "",
+    "*Akun*",
+    "`/status` — ringkasan akun",
+    "`/unlink` — putuskan akun Telegram ini",
+    "`/help` — pesan ini",
+  );
+
+  return lines.join("\n");
+}
 
 const WELCOME = [
   "*Selamat datang di IT Helpdesk*",
@@ -69,8 +107,6 @@ const WELCOME = [
 function statusLine(status: TicketStatus) {
   return STATUS_META[status]?.label ?? status;
 }
-
-const isStaffRole = (role: string) => role === "it_support" || role === "admin";
 
 function priorityLine(priority: TicketPriority) {
   return PRIORITY_META[priority]?.label ?? priority;
@@ -158,6 +194,10 @@ export async function handleUpdate(update: {
   message?: TelegramMessage;
   callback_query?: TelegramCallbackQuery;
 }) {
+  // Anyone who never linked has no chat-scoped menu, so the fallback list is
+  // what they see. Refresh it from the code on the first update of an isolate.
+  ensureDefaultCommands();
+
   if (update.callback_query) {
     await handleCallback(update.callback_query);
     return;
@@ -273,9 +313,15 @@ async function handleCommand(chatId: number, command: string, args: string) {
 
     const profile = await profileForChat(chatId);
     if (profile) {
+      // `/start` is also how someone asks the bot to notice a role change made
+      // in the web app, since nothing tells the bot when that happens.
+      await refreshCommandMenu(chatId, profile.role);
       await sendMessage(
         chatId,
-        `Halo *${md(profile.full_name)}* 👋\n\nKetik /new untuk membuat tiket, atau /tickets untuk melihat tiket kamu.`,
+        `Halo *${md(profile.full_name)}* 👋\n\n` +
+          (isStaffRole(profile.role)
+            ? "Ketik /queue untuk melihat antrean tim IT, atau /new untuk membuat tiket."
+            : "Ketik /new untuk membuat tiket, atau /tickets untuk melihat tiket kamu."),
       );
     } else {
       await sendMessage(chatId, WELCOME);
@@ -284,13 +330,18 @@ async function handleCommand(chatId: number, command: string, args: string) {
   }
 
   if (command === "help") {
-    await sendMessage(chatId, HELP);
+    const profile = await profileForChat(chatId);
+    if (profile) await refreshCommandMenu(chatId, profile.role);
+    await sendMessage(chatId, helpText(profile?.role ?? "employee"));
     return;
   }
 
   if (command === "unlink") {
     const removed = await unlinkChat(chatId);
     await clearSession(chatId);
+    // Drop the chat-scoped menu too, so a former staff member does not keep a
+    // menu full of commands they can no longer run.
+    await refreshCommandMenu(chatId, "employee");
     await sendMessage(
       chatId,
       removed
@@ -307,6 +358,14 @@ async function handleCommand(chatId: number, command: string, args: string) {
     return;
   }
 
+  if (STAFF_ONLY.has(command) && !isStaffRole(profile.role)) {
+    await sendMessage(
+      chatId,
+      "Perintah itu hanya untuk tim IT.\n\n" + helpText(profile.role),
+    );
+    return;
+  }
+
   switch (command) {
     case "new":
       await startNewTicket(chatId, profile.user_id);
@@ -320,12 +379,43 @@ async function handleCommand(chatId: number, command: string, args: string) {
       await showTicket(chatId, profile.user_id, profile.role, args);
       return;
 
+    case "reply":
+      await replyByNumber(chatId, profile.user_id, profile.role, args);
+      return;
+
+    case "queue":
+      await showQueue(chatId, profile.user_id, "all");
+      return;
+
+    case "open":
+      await showQueue(chatId, profile.user_id, "open");
+      return;
+
+    case "unassigned":
+      await showQueue(chatId, profile.user_id, "unassigned");
+      return;
+
+    case "find":
+      await showSearch(chatId, profile.user_id, args);
+      return;
+
+    case "claim":
+      await claimByNumberCommand(chatId, profile.user_id, profile.role, args);
+      return;
+
+    case "close":
+      await closeByNumberCommand(chatId, profile.user_id, profile.role, args);
+      return;
+
     case "status":
       await showStatus(chatId, profile);
       return;
 
     default:
-      await sendMessage(chatId, `Perintah \`/${command}\` tidak dikenal.\n\n${HELP}`);
+      await sendMessage(
+        chatId,
+        `Perintah \`/${command}\` tidak dikenal.\n\n${helpText(profile.role)}`,
+      );
   }
 }
 
@@ -341,9 +431,13 @@ async function handleLink(chatId: number, code: string) {
   }
 
   await clearSession(chatId);
+  await refreshCommandMenu(chatId, linked.role);
   await sendMessage(
     chatId,
-    `Terhubung sebagai *${md(linked.full_name)}* (${md(linked.role)}).\n\nKetik /new untuk membuat tiket.`,
+    `Terhubung sebagai *${md(linked.full_name)}* (${md(linked.role)}).\n\n` +
+      (isStaffRole(linked.role)
+        ? "Menu perintahnya sudah ditambah: /queue, /open, /unassigned, /find, /claim, /close."
+        : "Ketik /new untuk membuat tiket."),
   );
 }
 
@@ -480,6 +574,18 @@ async function createFromDraft(
 /* Listing and detail                                                          */
 /* -------------------------------------------------------------------------- */
 
+function renderTicketList(tickets: BotTicketRow[]) {
+  return tickets
+    .map((ticket) =>
+      [
+        `*#${md(ticket.ticket_number)}* · ${md(statusLine(ticket.status))}`,
+        md(ticket.title.slice(0, 60)),
+        `_${md(ticket.requester ?? "tanpa pemohon")} → ${md(ticket.assignee ?? "belum ditangani")}_`,
+      ].join("\n"),
+    )
+    .join("\n\n");
+}
+
 async function showTicketList(chatId: number, userId: string) {
   const tickets = await listMyTickets(userId, 10);
 
@@ -488,16 +594,148 @@ async function showTicketList(chatId: number, userId: string) {
     return;
   }
 
-  const body = tickets
-    .map(
-      (ticket) =>
-        `*#${md(ticket.ticket_number)}* ${md(statusLine(ticket.status))}\n${md(ticket.title.slice(0, 60))}`,
-    )
-    .join("\n\n");
-
-  await sendMessage(chatId, `*Tiket kamu* (${tickets.length})\n\n${body}`, {
+  await sendMessage(chatId, `*Tiket kamu* (${tickets.length})\n\n${renderTicketList(tickets)}`, {
     keyboard: ticketKeyboard(tickets),
   });
+}
+
+/* -------------------------------------------------------------------------- */
+/* Staff queue                                                                 */
+/* -------------------------------------------------------------------------- */
+
+const QUEUE_TITLE: Record<StaffQueue, string> = {
+  all: "Semua tiket",
+  open: "Tiket yang belum selesai",
+  unassigned: "Tiket yang belum ditangani",
+  mine: "Ditugaskan ke kamu",
+};
+
+async function showQueue(
+  chatId: number,
+  userId: string,
+  queue: StaffQueue,
+) {
+  const tickets = await listQueue(userId, queue, 10);
+
+  if (!tickets.length) {
+    await sendMessage(chatId, `Tidak ada tiket untuk *${md(QUEUE_TITLE[queue])}*.`);
+    return;
+  }
+
+  await sendMessage(
+    chatId,
+    `*${md(QUEUE_TITLE[queue])}* (${tickets.length})\n\n${renderTicketList(tickets)}\n\n` +
+      "_Tekan nomor tiket untuk membuka, atau balas dengan `/reply IT-000004 pesan`._",
+    { keyboard: ticketKeyboard(tickets) },
+  );
+}
+
+async function showSearch(chatId: number, userId: string, args: string) {
+  const query = args.trim();
+  if (!query) {
+    await sendMessage(chatId, "Format: `/find printer`");
+    return;
+  }
+
+  const tickets = await searchTickets(userId, query, 10);
+
+  if (!tickets.length) {
+    await sendMessage(chatId, `Tidak ada tiket yang cocok dengan *${md(query)}*.`);
+    return;
+  }
+
+  await sendMessage(
+    chatId,
+    `*Hasil pencarian* \`${md(query)}\` (${tickets.length})\n\n${renderTicketList(tickets)}`,
+    { keyboard: ticketKeyboard(tickets) },
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/* Acting on a ticket by its number                                            */
+/* -------------------------------------------------------------------------- */
+
+/** Splits `IT-000004 pesan panjang` into its number and its message. */
+function splitReference(args: string) {
+  const match = /^(\S+)\s+([\s\S]+)$/.exec(args.trim());
+  return match ? { reference: match[1], body: match[2].trim() } : null;
+}
+
+/**
+ * Replying by command rather than by "your next message is a reply". The
+ * session-based flow is still there behind the *Balas* button, but a plain
+ * message should never be mistaken for a reply.
+ */
+async function replyByNumber(chatId: number, userId: string, role: string, args: string) {
+  const parsed = splitReference(args);
+
+  if (!parsed) {
+    await sendMessage(chatId, "Format: `/reply IT-000004 pesanmu`");
+    return;
+  }
+
+  const ticket = await commentByNumber(userId, parsed.reference, parsed.body.slice(0, 5000));
+
+  if (!ticket) {
+    await sendMessage(
+      chatId,
+      `Tiket *${md(parsed.reference)}* tidak ditemukan atau bukan milikmu.`,
+    );
+    return;
+  }
+
+  // A pending "next message is a reply" draft would otherwise swallow whatever
+  // the user types next.
+  const session = await getSession(chatId);
+  if (session?.state === "reply") await clearSession(chatId);
+
+  await sendMessage(
+    chatId,
+    `Balasan terkirim ke *#${md(ticket.ticket_number)}*.`,
+    { keyboard: ticketActionsKeyboard(ticket, isStaffRole(role)) },
+  );
+}
+
+async function claimByNumberCommand(chatId: number, userId: string, role: string, args: string) {
+  const reference = args.trim();
+  if (!reference) {
+    await sendMessage(chatId, "Format: `/claim IT-000004`");
+    return;
+  }
+
+  const ticket = await claimByNumber(userId, reference);
+
+  if (!ticket) {
+    await sendMessage(
+      chatId,
+      `Tiket *${md(reference)}* tidak ditemukan, atau kamu tidak berhak mengambilnya.`,
+    );
+    return;
+  }
+
+  await sendMessage(chatId, `*#${md(ticket.ticket_number)}* sekarang ditangani *${md(ticket.assignee ?? "kamu")}*.`);
+  await sendTicketDetail(chatId, userId, role, ticket);
+}
+
+async function closeByNumberCommand(chatId: number, userId: string, role: string, args: string) {
+  const reference = args.trim();
+  if (!reference) {
+    await sendMessage(chatId, "Format: `/close IT-000004`");
+    return;
+  }
+
+  const ticket = await setStatusByNumber(userId, reference, "CLOSED");
+
+  if (!ticket) {
+    await sendMessage(
+      chatId,
+      `Tiket *${md(reference)}* tidak ditemukan, atau hanya tim IT yang bisa menutupnya.`,
+    );
+    return;
+  }
+
+  await sendMessage(chatId, `*#${md(ticket.ticket_number)}* ditutup.`);
+  await sendTicketDetail(chatId, userId, role, ticket);
 }
 
 async function showTicket(chatId: number, userId: string, role: string, args: string) {
@@ -532,19 +770,32 @@ async function showStatus(chatId: number, profile: { user_id: string; full_name:
     (ticket) => !["RESOLVED", "CLOSED"].includes(ticket.status),
   ).length;
 
-  await sendMessage(
-    chatId,
-    [
-      `*${md(profile.full_name)}*`,
-      `Role: ${md(profile.role)}`,
+  const lines = [
+    `*${md(profile.full_name)}*`,
+    `Role: ${md(profile.role)}`,
+    "",
+    `Total tiket: ${tickets.length}`,
+    `Masih berjalan: ${open}`,
+    `Selesai: ${tickets.length - open}`,
+    "",
+    "Telegram: terhubung",
+  ];
+
+  if (isStaffRole(profile.role)) {
+    const [unassigned, mine] = await Promise.all([
+      listQueue(profile.user_id, "unassigned", 100),
+      listQueue(profile.user_id, "mine", 100),
+    ]);
+
+    lines.push(
       "",
-      `Total tiket: ${tickets.length}`,
-      `Masih berjalan: ${open}`,
-      `Selesai: ${tickets.length - open}`,
-      "",
-      "Telegram: terhubung",
-    ].join("\n"),
-  );
+      "*Antrean tim IT*",
+      `Belum ditangani: ${unassigned.length}`,
+      `Ditugaskan ke kamu: ${mine.length}`,
+    );
+  }
+
+  await sendMessage(chatId, lines.join("\n"));
 }
 
 /* -------------------------------------------------------------------------- */
