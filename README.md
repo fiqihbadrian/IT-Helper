@@ -6,6 +6,7 @@ signed-in user, so every one of them is governed by the same Row Level Security
 policies — there is no second permission model to keep in sync.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](#license)
+[![CI](https://github.com/fiqihbadrian/IT-Helper/actions/workflows/ci.yml/badge.svg)](https://github.com/fiqihbadrian/IT-Helper/actions/workflows/ci.yml)
 [![Next.js 15](https://img.shields.io/badge/Next.js-15-000000?logo=nextdotjs&logoColor=white)](https://nextjs.org)
 [![React 19](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black)](https://react.dev)
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org)
