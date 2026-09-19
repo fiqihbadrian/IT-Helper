@@ -35,12 +35,16 @@ policies — there is no second permission model to keep in sync.
 
 | Email | Password | Role | What to look at |
 | --- | --- | --- | --- |
-| `admin@helpdesk.test` | `Password123!` | admin | Everything, plus Admin → Users / Categories / Departments / Channels / Activity |
-| `support1@helpdesk.test` | `Password123!` | IT support | The queue, ticket controls, status changes |
-| `employee1@helpdesk.test` | `Password123!` | employee | Only their own tickets, and the "New ticket" form |
+| `employee1@helpdesk.test` | `Password123!` | employee | Their own tickets, the create form, the conversation timeline |
 
 > It is a public demo on a shared database. Please do not put anything real in it —
 > the data is reset whenever it gets noisy.
+>
+> **Only the employee login above is published.** The seeded admin and IT-support
+> accounts exist, but their passwords are rotated on the deployed instance, because a
+> repo anyone can read is not a place to publish an account that can delete tickets and
+> deactivate users. To see the staff and admin screens, run the project locally —
+> `npm run db:push` seeds all four logins with `Password123!`.
 
 Two things you can try that most helpdesk demos do not have:
 

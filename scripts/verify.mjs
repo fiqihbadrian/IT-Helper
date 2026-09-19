@@ -24,6 +24,18 @@ const ACCOUNTS = {
   employee2: "employee2@helpdesk.test",
 };
 
+// The deployed demo rotates every seeded password except `employee1`, so that
+// publishing the README does not hand out an admin login. A fresh clone with a
+// fresh seed has no VERIFY_PASSWORD, and everything falls back to the seed
+// password, so this file keeps working in both places.
+//
+// Read lazily: loadEnv() runs inside main(), so a module-scope read would
+// happen before .env.local has been parsed.
+function passwordFor(email) {
+  const rotated = process.env.VERIFY_PASSWORD;
+  return rotated && email !== ACCOUNTS.employee1 ? rotated : PASSWORD;
+}
+
 let passed = 0;
 let failed = 0;
 
@@ -67,7 +79,7 @@ class Session {
     const response = await fetch(`${this.url}/auth/v1/token?grant_type=password`, {
       method: "POST",
       headers: { apikey: this.key, "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password: PASSWORD }),
+      body: JSON.stringify({ email, password: passwordFor(email) }),
     });
     const body = await response.json();
     if (!response.ok) throw new Error(body.error_description ?? body.msg ?? "sign-in failed");
