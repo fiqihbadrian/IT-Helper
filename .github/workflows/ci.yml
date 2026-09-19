@@ -1,0 +1,79 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Typecheck and build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      # `next build` imports lib/env.ts at module scope, which throws when the
+      # NEXT_PUBLIC_* values are missing. They are inlined into the bundle at
+      # build time, so placeholders are enough to prove the app compiles — and
+      # they mean CI never needs a real Supabase project.
+      - name: Build
+        run: npm run build
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: https://placeholder.supabase.co
+          NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: sb_publishable_ci_placeholder
+          NEXT_PUBLIC_TICKET_BUCKET: ticket-attachments
+          NEXT_PUBLIC_APP_URL: http://localhost:3000
+
+  verify:
+    name: Database checks
+    runs-on: ubuntu-latest
+    # `npm run verify` asserts the security model against a live database with
+    # the seed data — it cannot run against placeholders. It is skipped unless
+    # SUPABASE_DB_URL is configured as a repository secret, so a fork or a fresh
+    # clone still gets a green build.
+    if: ${{ github.event_name != 'pull_request' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Check whether a database is configured
+        id: db
+        run: |
+          if [ -n "${{ secrets.SUPABASE_DB_URL }}" ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::SUPABASE_DB_URL is not set — skipping the database checks."
+          fi
+
+      - name: Verify
+        if: steps.db.outputs.available == 'true'
+        run: npm run verify
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          NEXT_PUBLIC_TICKET_BUCKET: ticket-attachments
+          NEXT_PUBLIC_APP_URL: http://localhost:3000

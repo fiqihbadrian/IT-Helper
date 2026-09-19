@@ -1,49 +1,50 @@
 # REST API v1
 
-API untuk sistem lain: skrip, cron, integrasi internal, atau tool AI. Semua
-endpoint bekerja pada data dan aturan akses yang sama dengan web — bukan salinan
-logika.
+An API for other systems: scripts, cron jobs, internal integrations, or AI tools. Every
+endpoint works on the same data and the same access rules as the web app — it is not a
+copy of the logic.
 
-## Autentikasi
+## Authentication
 
-Setiap pengguna bisa membuat API key di **Profil → API Keys**.
+Any user can create an API key under **Profile → API Keys**.
 
 ```http
 Authorization: Bearer itk_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 ```
 
-`X-API-Key` juga diterima kalau klien tidak nyaman memakai header Authorization.
+`X-API-Key` is accepted too, for clients that are not comfortable using the
+Authorization header.
 
-Key hanya ditampilkan **sekali** saat dibuat. Yang disimpan di database cuma
-hash SHA-256 dan 12 karakter pertama sebagai penanda, jadi key yang hilang tidak
-bisa dipulihkan — buat yang baru dan cabut yang lama.
+The key is shown **once**, at creation. The database stores only its SHA-256 hash and
+the first 12 characters as a label, so a lost key cannot be recovered — create a new
+one and revoke the old one.
 
-### Key mewarisi identitas pemiliknya
+### A key inherits its owner's identity
 
-Ini bagian terpenting dari desainnya. Key bukan akun super: setiap request
-dijalankan sebagai pemilik key di dalam satu transaksi Postgres, dengan
-`set local role authenticated` dan klaim `sub` berisi id pemiliknya. Artinya
-`auth.uid()` mengembalikan orang yang benar, dan **seluruh kebijakan RLS tetap
-berlaku**.
+This is the most important part of the design. A key is not a super-account: every
+request runs as the key's owner inside a single Postgres transaction, with
+`set local role authenticated` and a `sub` claim holding the owner's id. So `auth.uid()`
+returns the right person, and **every RLS policy still applies**.
 
-| Key milik | Bisa | Tidak bisa |
+| Key belongs to | Can | Cannot |
 | --- | --- | --- |
-| `employee` | lihat & buat tiket sendiri, komentar di tiket sendiri | lihat tiket orang lain, ubah status, lihat direktori |
-| `it_support` | lihat semua tiket, ubah status/prioritas, ambil tiket, lihat semua profil | kelola pengguna |
-| `admin` | semuanya, termasuk hapus tiket | — |
+| `employee` | see and create their own tickets, comment on their own tickets | see other people's tickets, change status, read the directory |
+| `it_support` | see all tickets, change status/priority, claim tickets, see all profiles | manage users |
+| `admin` | everything, including deleting tickets | — |
 
-Konsekuensinya: kalau aturan akses berubah di SQL, API ikut berubah tanpa
-deploy. Tidak ada daftar izin terpisah yang bisa melenceng dari database.
+The consequence: if an access rule changes in SQL, the API changes with it and no
+deploy is needed. There is no separate permission list that can drift from the
+database.
 
-## Format respons
+## Response format
 
-Sukses:
+Success:
 
 ```json
 { "ok": true, "data": { } }
 ```
 
-Gagal:
+Failure:
 
 ```json
 {
@@ -56,24 +57,23 @@ Gagal:
 }
 ```
 
-Kode error: `bad_request` (400), `unauthorized` (401), `forbidden` (403),
+Error codes: `bad_request` (400), `unauthorized` (401), `forbidden` (403),
 `not_found` (404), `internal_error` (500).
 
-`not_found` sengaja dipakai untuk "tidak ada" **dan** "bukan milikmu". Kalau
-karyawan menebak-nebak nomor tiket, jawabannya tidak boleh membocorkan tiket
-siapa yang ada.
+`not_found` deliberately means both "does not exist" **and** "not yours". If an
+employee guesses ticket numbers, the answer must not leak whose tickets exist.
 
-## Endpoint
+## Endpoints
 
 ### `GET /api/v1`
 
-Dokumentasi diri sendiri: daftar endpoint, nilai enum yang sah, dan contoh
-payload. Cocok untuk dipanggil pertama kali oleh tool yang belum tahu apa-apa.
+Self-describing: the endpoint list, the valid enum values, and example payloads. A good
+first call for a tool that knows nothing yet.
 
 ### `GET /api/v1/me`
 
-Identitas pemanggil, izin, dan ringkasan tiket. Panggilan pertama yang sebaiknya
-dilakukan integrasi apa pun, supaya bisa gagal cepat kalau key-nya salah peran.
+The caller's identity, permissions and ticket summary. The first call any integration
+should make, so it can fail fast when the key has the wrong role.
 
 ```json
 {
@@ -85,7 +85,7 @@ dilakukan integrasi apa pun, supaya bisa gagal cepat kalau key-nya salah peran.
     "role": "employee",
     "department": "Finance",
     "telegram": { "employee": false, "staff": false },
-    "api_key": { "id": "…", "name": "Bot laporan" },
+    "api_key": { "id": "…", "name": "Report bot" },
     "permissions": {
       "create_ticket": true,
       "view_all_tickets": false,
@@ -99,33 +99,32 @@ dilakukan integrasi apa pun, supaya bisa gagal cepat kalau key-nya salah peran.
 
 ### `GET /api/v1/meta`
 
-Kategori aktif, departemen, dan angka statistik — semuanya dalam satu request,
-supaya form di sisi klien tidak perlu tiga kali bolak-balik.
+Active categories, departments and the stat counters — all in one request, so a client
+form does not need three round trips.
 
 ### `GET /api/v1/users`
-Direktori, dibatasi RLS: karyawan melihat dirinya sendiri dan orang-orang yang
-terlibat di tiketnya (nama agen yang membalas harus terbaca), staf melihat
-semuanya.
 
-| Query | Keterangan |
+The directory, bounded by RLS: an employee sees themselves and the people involved in
+their tickets (an agent's name has to be readable), staff see everyone.
+
+| Query | Meaning |
 | --- | --- |
 | `role` | `employee`, `it_support`, `admin` |
-| `q` | cari di nama atau email |
-| `active=all` | ikut sertakan akun nonaktif |
-| `page`, `limit` | paginasi, `limit` maksimum 100 |
+| `q` | search name or email |
+| `active=all` | include deactivated accounts |
+| `page`, `limit` | pagination, `limit` capped at 100 |
 
 ### `GET /api/v1/tickets`
 
-| Query | Keterangan |
+| Query | Meaning |
 | --- | --- |
 | `status` | `OPEN`, `ASSIGNED`, `IN_PROGRESS`, `WAITING_USER`, `RESOLVED`, `CLOSED` |
 | `priority` | `LOW`, `MEDIUM`, `HIGH`, `CRITICAL` |
-| `category_id` | UUID kategori |
-| `q` | cari di judul dan deskripsi |
-| `page`, `limit` | paginasi, default 25, maksimum 100 |
+| `category_id` | category UUID |
+| `q` | search title and description |
+| `page`, `limit` | pagination, default 25, capped at 100 |
 
-Nilai enum tidak peka huruf besar/kecil; nilai yang salah dibalas dengan daftar
-yang benar.
+Enum values are case-insensitive; a wrong one is answered with the list of correct ones.
 
 ```json
 {
@@ -135,7 +134,7 @@ yang benar.
       {
         "id": "…",
         "ticket_number": "IT-000004",
-        "title": "Server tidak bisa diakses",
+        "title": "Server is unreachable",
         "status": "OPEN",
         "priority": "CRITICAL",
         "category": "Server",
@@ -152,40 +151,40 @@ yang benar.
 }
 ```
 
-`total` adalah jumlah **dalam jangkauan pemanggil**, bukan jumlah seluruh tiket
-di sistem. Karyawan melihat total tiketnya sendiri; staf melihat total antrean.
+`total` is the count **within the caller's reach**, not the number of tickets in the
+system. An employee sees the total of their own tickets; staff see the queue total.
 
-Email requester selalu ikut — itulah identitas yang dibutuhkan sistem luar untuk
-memetakan tiket ke orangnya, tanpa lookup kedua.
+The requester's email is always included — that is the identity an outside system needs
+to map a ticket back to a person, with no second lookup.
 
 ### `POST /api/v1/tickets`
 
 ```json
 {
-  "title": "Printer lantai 3 offline",
-  "description": "Muncul error offline sejak pagi, sudah restart tetap sama.",
+  "title": "Printer on floor 3 is offline",
+  "description": "Has shown offline since this morning; restarted it, still the same.",
   "priority": "HIGH",
   "category_id": "b709434d-…",
   "requester_email": "employee1@helpdesk.test"
 }
 ```
 
-`title` minimal 4 karakter, `description` minimal 10. `priority` default
+`title` is at least 4 characters, `description` at least 10. `priority` defaults to
 `MEDIUM`.
 
-`requester_email` boleh diisi sebagai penegasan identitas; kalau tidak cocok
-dengan pemilik key, request ditolak `403`. RLS memaksa `created_by = auth.uid()`,
-jadi tiket atas nama orang lain memang mustahil — field ini ada supaya
-kesalahannya diberi nama, bukan gagal diam-diam.
+`requester_email` may be supplied as a statement of identity; if it does not match the
+key's owner, the request is rejected with `403`. RLS forces `created_by = auth.uid()`, so
+a ticket in someone else's name is impossible anyway — the field exists so the mistake
+gets a name instead of failing silently.
 
-Efek sampingnya otomatis: nomor `IT-0000xx` dibuat, baris `ticket_history`
-tertulis, dan notifikasi terkirim — semuanya lewat trigger yang sama seperti
-tiket dari web.
+Side effects happen automatically: the `IT-0000xx` number is allocated, a
+`ticket_history` row is written, and notifications go out — all through the same
+triggers as a ticket created in the web app.
 
 ### `GET /api/v1/tickets/{number}`
 
-Nomor tiket, bukan UUID: `IT-000004`. UUID-nya tetap ada di payload untuk
-dipakai sebagai foreign key di sistem lain.
+The ticket number, not a UUID: `IT-000004`. The UUID is still in the payload, for use as
+a foreign key in other systems.
 
 ### `PATCH /api/v1/tickets/{number}`
 
@@ -193,90 +192,90 @@ dipakai sebagai foreign key di sistem lain.
 { "status": "IN_PROGRESS", "assign_to_me": true }
 ```
 
-Field: `status`, `priority`, `category_id`, `assign_to_me`. Hanya staf yang
-boleh mengubah; karyawan yang mencoba akan mendapat `404` karena barisnya tidak
-bisa ia ubah — bukan karena ada pemeriksaan khusus di handler.
+Fields: `status`, `priority`, `category_id`, `assign_to_me`. Only staff may change
+these; an employee who tries gets a `404`, because the row is not updatable by them —
+not because the handler contains a special check.
 
 ### `GET|POST /api/v1/tickets/{number}/comments`
 
 ```json
-{ "message": "Sudah saya cek, kabel HDMI longgar." }
+{ "message": "Checked it — the HDMI cable was loose." }
 ```
 
-Komentar dari API memicu notifikasi yang sama dengan komentar dari web, karena
-efek sampingnya ada di trigger.
+A comment from the API fires the same notifications as a comment from the web app,
+because the side effects live in the trigger.
 
-## Contoh
+## Examples
 
 ```bash
 KEY=itk_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 
-# siapa saya
+# who am I
 curl -s -H "Authorization: Bearer $KEY" https://helpdesk.example.com/api/v1/me
 
-# tiket saya yang masih terbuka
+# my open tickets
 curl -s -H "Authorization: Bearer $KEY" \
   "https://helpdesk.example.com/api/v1/tickets?status=OPEN&limit=10"
 
-# buat tiket
+# create a ticket
 curl -s -X POST -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
-  -d '{"title":"Printer lantai 3 offline","description":"Error offline sejak pagi.","priority":"HIGH"}' \
+  -d '{"title":"Printer on floor 3 is offline","description":"Offline since this morning.","priority":"HIGH"}' \
   https://helpdesk.example.com/api/v1/tickets
 
-# balas
+# reply
 curl -s -X POST -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
-  -d '{"message":"Sudah dicoba, masih sama."}' \
+  -d '{"message":"Tried again, still the same."}' \
   https://helpdesk.example.com/api/v1/tickets/IT-000004/comments
 ```
 
-## Menyambungkan tool AI
+## Wiring up an AI tool
 
-Pola yang dipakai: satu key per integrasi, dengan nama yang jelas.
+The pattern that works: one key per integration, with an obvious name.
 
-1. Buat key di **Profil → API Keys**, beri nama seperti `n8n workflow` atau
+1. Create a key under **Profile → API Keys**, named something like `n8n workflow` or
    `claude desktop`.
-2. Simpan sebagai secret di sisi tool tersebut.
-3. Suruh tool memanggil `GET /api/v1` dulu — deskripsi endpoint dan contoh
-   payload ada di sana, jadi tidak perlu menempel dokumentasi ke prompt.
-4. Panggil `GET /api/v1/me` untuk tahu perannya, lalu pakai endpoint sesuai izin.
+2. Store it as a secret on the tool's side.
+3. Have the tool call `GET /api/v1` first — the endpoint descriptions and example
+   payloads are right there, so there is no need to paste documentation into a prompt.
+4. Call `GET /api/v1/me` to learn its role, then use the endpoints its permissions allow.
 
-Key karyawan sudah cukup untuk membuka dan membalas tiket sendiri, jadi bot
-pribadi tidak perlu diberi hak staf.
+An employee key is enough to open and reply to your own tickets, so a personal bot does
+not need to be given staff rights.
 
-## Perubahan yang memutus kompatibilitas
+## Breaking change
 
-**`telegram_linked` → `telegram: { employee, staff }`.** Sistem punya dua bot
-Telegram sejak `0009_two_bots.sql` — satu untuk karyawan, satu untuk tim IT — dan
-satu boolean tidak bisa menyatakan "tertaut ke yang mana". Bidang lamanya dihapus,
-bukan dipertahankan sebagai alias, supaya integrasi yang belum menyesuaikan gagal
-cepat dan jelas alih-alih diam-diam salah baca.
+**`telegram_linked` → `telegram: { employee, staff }`.** The system has had two Telegram
+bots since `0009_two_bots.sql` — one for employees, one for the IT team — and a single
+boolean cannot express "linked to which one". The old field was removed rather than kept
+as an alias, so an integration that has not caught up fails fast and loudly instead of
+quietly reading the wrong thing.
 
-## Membatalkan
+## Revoking
 
-Cabut key kapan saja di **Profil → API Keys**, atau dari server:
+Revoke a key at any time under **Profile → API Keys**, or from the server:
 
 ```sql
 select public.revoke_api_key('<uuid>');
 ```
 
-Key yang dicabut langsung berhenti bekerja — `verify_api_key()` mengembalikan
-kosong, sehingga request berikutnya dibalas `401`. Kolom `last_used_at` diisi
-setiap kali key dipakai, jadi key yang tidak pernah dipakai bisa dikenali.
+A revoked key stops working immediately — `verify_api_key()` returns nothing, so the
+next request is answered with `401`. The `last_used_at` column is updated on every use,
+so keys that are never used can be identified.
 
-## Berkas
+## Files
 
 ```
-lib/api/errors.ts                  tipe error + kode
-lib/api/auth.ts                    verifikasi key, impersonasi, peran
-lib/api/handler.ts                 pembungkus route + transaksi
-lib/api/response.ts                format respons, paginasi
-lib/api/body.ts                    parsing body dan enum
-lib/api/tickets.ts                 query tiket sebagai user
-app/api/v1/route.ts                dokumentasi diri
-app/api/v1/me/route.ts             identitas pemanggil
-app/api/v1/meta/route.ts           kategori, departemen, statistik
-app/api/v1/users/route.ts          direktori
-app/api/v1/tickets/route.ts        daftar + buat
-app/api/v1/tickets/[number]/…      detail, ubah, komentar
-supabase/migrations/0006_api_keys.sql  tabel key + fungsi terbit/verifikasi/cabut
+lib/api/errors.ts                  error types + codes
+lib/api/auth.ts                    key verification, impersonation, roles
+lib/api/handler.ts                 route wrapper + transaction
+lib/api/response.ts                response format, pagination
+lib/api/body.ts                    body and enum parsing
+lib/api/tickets.ts                 ticket queries as a user
+app/api/v1/route.ts                self-documentation
+app/api/v1/me/route.ts             caller identity
+app/api/v1/meta/route.ts           categories, departments, stats
+app/api/v1/users/route.ts          directory
+app/api/v1/tickets/route.ts        list + create
+app/api/v1/tickets/[number]/…      detail, update, comments
+supabase/migrations/0006_api_keys.sql  key table + issue/verify/revoke functions
 ```

@@ -1,143 +1,141 @@
 # Web Widget (Phase 5)
 
-Widget chat yang bisa ditempel ke website mana pun dengan satu baris `<script>`.
-Percakapan pengunjung menjadi tiket biasa di antrian yang sama — bukan sistem
-terpisah, bukan tabel terpisah, bukan antrian terpisah.
+A chat widget that can be pasted onto any website with one `<script>` line. Visitor
+conversations become ordinary tickets in the same queue — not a separate system, not a
+separate table, not a separate queue.
 
 ```
-pengunjung website
+visitor on a third-party site
       │  POST /api/widget/v1/session
       ▼
   channels  ──►  tickets (source='widget', channel_id=…)
                    │
-                   ├── ticket_contacts   identitas pengunjung (nama, email, IP)
-                   ├── ticket_comments   isi percakapan
-                   ├── ticket_history    jejak audit
-                   └── notifications     ke tim IT, audience='staff'
+                   ├── ticket_contacts   visitor identity (name, email, IP)
+                   ├── ticket_comments   the conversation itself
+                   ├── ticket_history    audit trail
+                   └── notifications     to the IT team, audience='staff'
 ```
 
 ---
 
-## 1. Konsep
+## 1. Concepts
 
-| Istilah | Arti |
+| Term | Meaning |
 | --- | --- |
-| **Channel** | Satu website yang boleh menempelkan widget. Punya public key, daftar origin yang diizinkan, dan default tiket. |
-| **Public key** | `wk_…`. Dikirim ke browser, **memang publik**. Fungsinya menamai channel, bukan memberi akses. |
-| **Session token** | Diterbitkan sekali saat percakapan dimulai. Disimpan di `localStorage` pengunjung, di server hanya hash-nya. |
-| **Visitor** | Pengunjung website. **Tidak pernah** menjadi akun. |
-| **System profile** | Satu profil mesin per channel. Tiket widget dicatat atas nama profil ini. |
+| **Channel** | One website that is allowed to embed the widget. Has a public key, a list of allowed origins, and ticket defaults. |
+| **Public key** | `wk_…`. Sent to the browser and **genuinely public**. It names a channel; it does not grant access. |
+| **Session token** | Issued once when a conversation starts. Stored in the visitor's `localStorage`; only its hash is on the server. |
+| **Visitor** | Someone on a third-party website. **Never** becomes an account. |
+| **System profile** | One machine profile per channel. Widget tickets are filed in its name. |
 
-### Keputusan utama: pengunjung bukan user
+### The central decision: a visitor is not a user
 
-Cara yang kelihatannya paling gampang adalah membuat akun per pengunjung. Itu
-salah. Pengunjung bukan karyawan: mereka tidak punya role, tidak punya
-departemen, tidak ada urusannya di `/admin/users`, dan tidak boleh muncul di
-dropdown "assign to" bersebelahan dengan rekan kerja sungguhan. Jumlah mereka
-juga tidak akan pernah berkurang, karena — tidak seperti karyawan — tidak ada
-yang bisa menonaktifkan mereka.
+The obvious way to build this is to create an account per visitor. That is wrong.
+Visitors are not employees: they have no role and no department, they have no business
+in `/admin/users`, and they must not appear in the "assign to" dropdown next to real
+colleagues. Their numbers would also never go down, because — unlike an employee —
+there is nobody who can deactivate them.
 
-Jadi setiap channel punya **satu system profile** (`profiles.is_system = true`),
-dan kata-kata pengunjung ditulis atas nama profil itu. Identitas asli pengunjung
-hidup di `ticket_contacts`, satu baris per tiket eksternal.
+So each channel owns **one system profile** (`profiles.is_system = true`), and the
+visitor's words are written in that profile's name. The visitor's real identity lives in
+`ticket_contacts`, one row per external ticket.
 
-Untungnya:
+The payoff:
 
-- **RLS tidak diubah sama sekali.** Request widget berjalan lewat `asUser()` yang
-  sama dengan bot Telegram dan REST API, jadi `tickets_insert` dengan
-  `created_by = auth.uid()` tetap terpenuhi dan seluruh policy bekerja apa
-  adanya. Tidak ada lubang "anonymous" yang harus diaudit.
-- **Staf dan pengunjung tetap bisa dibedakan tanpa role baru.** Tiket yang punya
-  baris `ticket_contacts` berarti eksternal, dan `tickets.source` menyebutkan
-  asalnya.
+- **RLS is not changed at all.** Widget requests go through the same `asUser()` as the
+  Telegram bot and the REST API, so `tickets_insert` with `created_by = auth.uid()` is
+  still satisfied and every policy works as written. There is no "anonymous" hole to
+  audit.
+- **Staff and visitors are still distinguishable without a new role.** A ticket with a
+  `ticket_contacts` row is external, and `tickets.source` says where it came from.
 
-System profile `is_active = true` (RLS mensyaratkan) dan `is_system = true` —
-kolom terakhir inilah yang menyembunyikannya dari daftar user, dari dropdown
-assignee, dan dari tabel notifikasi.
+The system profile has `is_active = true` (RLS requires it) and `is_system = true` — that
+last column is what hides it from the user list, from the assignee dropdown, and from the
+notification table.
 
 ---
 
 ## 2. Setup
 
-### 2.1 Buat channel
+### 2.1 Create a channel
 
-Masuk sebagai admin → **Admin → Channels → New channel**.
+Sign in as an admin → **Admin → Channels → New channel**.
 
-| Field | Keterangan |
+| Field | Meaning |
 | --- | --- |
-| Name | Nama channel, muncul di judul tiket dan di timeline. |
-| Accent colour | Warna launcher dan gelembung pesan pengunjung. |
-| Allowed origins | Satu origin per baris, mis. `https://example.com`. Boleh tanpa skema — otomatis ditambah `https://`. |
-| Greeting | Kalimat pembuka di dalam panel. |
-| Default priority | Prioritas tiket baru dari channel ini. |
-| Default category | Kategori tiket baru. |
-| Department | Departemen tiket baru. |
+| Name | Channel name; appears in the ticket title and on the timeline. |
+| Accent colour | Colour of the launcher and the visitor's message bubbles. |
+| Allowed origins | One origin per line, e.g. `https://example.com`. The scheme is optional — `https://` is added for you. |
+| Greeting | The opening line inside the panel. |
+| Default priority | Priority for new tickets from this channel. |
+| Default category | Category for new tickets. |
+| Department | Department for new tickets. |
 
-Menyimpan channel akan membuat, dalam satu langkah:
+Saving a channel does three things in one step:
 
-1. satu baris `auth.users` dengan email `<slug>@widget.local` dan password acak
-   yang tidak pernah ditampilkan,
-2. satu baris `profiles` dengan `is_system = true`, `role = 'employee'`,
-3. satu baris `channels` beserta public key `wk_…`.
+1. creates an `auth.users` row with the email `<slug>@widget.local` and a random
+   password that is never displayed,
+2. creates a `profiles` row with `is_system = true`, `role = 'employee'`,
+3. creates a `channels` row with its `wk_…` public key.
 
-Akun tersebut ada semata-mata karena `profiles.id` punya foreign key ke
-`auth.users`. Akun itu tidak bisa dipakai login.
+That account exists purely because `profiles.id` has a foreign key to `auth.users`. It
+cannot be used to sign in.
 
-### 2.2 Tempel snippet
+### 2.2 Paste the snippet
 
-Halaman channel menampilkan snippet yang tinggal disalin:
+The channel page shows a snippet ready to copy:
 
 ```html
-<script src="https://<host-anda>/widget.js" data-key="wk_…" async></script>
+<script src="https://<your-host>/widget.js" data-key="wk_…" async></script>
 ```
 
-Letakkan tepat sebelum `</body>`. Host di snippet diambil dari origin yang sedang
-Anda buka, jadi snippet otomatis benar di local maupun di production.
+Put it just before `</body>`. The host in the snippet is taken from the origin you are
+browsing, so the snippet is correct locally and in production without editing.
 
-Atribut opsional:
+Optional attributes:
 
-| Atribut | Default | Fungsi |
+| Attribute | Default | Purpose |
 | --- | --- | --- |
-| `data-key` | — | **Wajib.** Public key channel. |
-| `data-base` | origin `widget.js` | Base URL API. Berguna kalau file `widget.js` disajikan dari CDN lain. |
+| `data-key` | — | **Required.** The channel's public key. |
+| `data-base` | `widget.js`'s origin | API base URL. Useful when `widget.js` is served from another CDN. |
 
 ---
 
-## 3. Alur percakapan
+## 3. Conversation flow
 
-1. Widget **tidak melakukan request apa pun** sampai pengunjung mengklik
-   launcher. Halaman yang tidak pernah dipakai tidak membebani apa pun.
-2. Klik pertama → `GET /config` → nama, greeting, warna.
-3. Pengunjung mengisi nama + email dan menulis pesan → `POST /session`:
-   - satu tiket `source='widget'`, `channel_id=<channel>`, `created_by=<system profile>`
-   - satu baris `ticket_contacts` (nama, email, IP, user agent, page URL)
-   - satu komentar pertama
-   - satu `widget_sessions` dengan hash token
-   - satu token dikembalikan **hanya sekali**
-4. Widget menyimpan token di `localStorage` dengan key `itw.token.<public key>`,
-   lalu polling `GET /messages` setiap 4 detik.
-5. Balasan tim IT muncul sebagai komentar biasa di tiket yang sama. Tidak ada
-   jalur khusus: staf menjawab dari halaman tiket web seperti tiket lain.
-6. Pengunjung membalas → `POST /messages` → komentar baru + notifikasi
-   `audience='staff'` ke seluruh bench.
+1. The widget makes **no network request at all** until the visitor clicks the launcher.
+   A page nobody uses costs nothing.
+2. First click → `GET /config` → name, greeting, colour.
+3. The visitor fills in name + email and types a message → `POST /session`:
+   - one ticket with `source='widget'`, `channel_id=<channel>`, `created_by=<system profile>`
+   - one `ticket_contacts` row (name, email, IP, user agent, page URL)
+   - one opening comment
+   - one `widget_sessions` row with the token's hash
+   - one token returned **exactly once**
+4. The widget stores the token in `localStorage` under `itw.token.<public key>`, then
+   polls `GET /messages` every 4 seconds.
+5. An IT reply appears as an ordinary comment on the same ticket. There is no special
+   path: staff answer from the web ticket page like any other ticket.
+6. The visitor replies → `POST /messages` → a new comment plus an `audience='staff'`
+   notification to the whole bench.
 
-Kalau staf menutup tiket (`CLOSED`) atau menandainya `RESOLVED`, widget
-menampilkan catatan peringatan dan menonaktifkan composer.
+If staff close the ticket (`CLOSED`) or mark it `RESOLVED`, the widget shows a notice and
+disables the composer.
 
 ---
 
 ## 4. HTTP API
 
-Base: `<host>/api/widget/v1`. Semua respons berformat `{ ok, data }` atau
+Base: `<host>/api/widget/v1`. Every response is `{ ok, data }` or
 `{ ok, error: { code, message, details? } }`.
 
-Header:
+Headers:
 
-| Header | Kapan | Isi |
+| Header | When | Contents |
 | --- | --- | --- |
-| `X-Widget-Key` | Semua request | Public key channel |
-| `X-Widget-Token` | `/messages` | Session token |
-| `Origin` | Otomatis oleh browser | Dicek terhadap `allowed_origins` |
+| `X-Widget-Key` | Every request | The channel's public key |
+| `X-Widget-Token` | `/messages` | The session token |
+| `Origin` | Set by the browser | Checked against `allowed_origins` |
 
 ### `GET /config`
 
@@ -148,7 +146,7 @@ curl -H "Origin: https://example.com" \
 ```
 
 ```json
-{ "ok": true, "data": { "name": "Demo Site", "greeting": "Halo! Ada yang bisa kami bantu?", "accentColor": "#0ea5e9" } }
+{ "ok": true, "data": { "name": "Demo Site", "greeting": "Hi! How can we help?", "accentColor": "#0ea5e9" } }
 ```
 
 ### `POST /session`
@@ -161,14 +159,13 @@ curl -X POST https://<host>/api/widget/v1/session \
   -d '{
     "name": "Dewi Lestari",
     "email": "dewi@example.com",
-    "message": "Printer di lantai 3 tidak bisa mencetak.",
+    "message": "The printer on floor 3 will not print.",
     "visitorRef": "v-abc123",
-    "pageUrl": "https://example.com/kontak"
+    "pageUrl": "https://example.com/contact"
   }'
 ```
 
-`201` dengan `{ token, conversation, messages }`. `token` tidak akan pernah
-ditampilkan lagi.
+`201` with `{ token, conversation, messages }`. `token` is never shown again.
 
 ### `GET /messages`
 
@@ -179,8 +176,8 @@ curl "https://<host>/api/widget/v1/messages?since=2026-09-19T00:00:00Z" \
   -H "X-Widget-Token: <token>"
 ```
 
-`since` opsional (ISO 8601). Tiket **tidak pernah** diambil dari request —
-selalu dari baris `widget_sessions`.
+`since` is optional (ISO 8601). The ticket is **never** taken from the request — always
+from the `widget_sessions` row.
 
 ### `POST /messages`
 
@@ -190,115 +187,113 @@ curl -X POST https://<host>/api/widget/v1/messages \
   -H "X-Widget-Key: wk_…" \
   -H "X-Widget-Token: <token>" \
   -H "Content-Type: application/json" \
-  -d '{"message": "Ada update?"}'
+  -d '{"message": "Any update?"}'
 ```
 
-### Error
+### Errors
 
-| Status | Code | Arti |
+| Status | Code | Meaning |
 | --- | --- | --- |
-| 400 | `bad_request` | Body bukan JSON, nama/email/pesan tidak valid, `since` salah format |
-| 401 | `unauthorized` | `X-Widget-Key` tidak ada / tidak dikenal, atau token tidak ada / kedaluwarsa |
-| 403 | `forbidden` | Origin tidak diizinkan, channel dimatikan, atau token milik channel lain |
-| 429 | `rate_limited` | Terlalu banyak pesan atau percakapan |
-| 500 | `internal_error` | Kesalahan tak terduga |
+| 400 | `bad_request` | Body is not JSON, name/email/message invalid, `since` malformed |
+| 401 | `unauthorized` | `X-Widget-Key` missing or unknown, or the token is missing or expired |
+| 403 | `forbidden` | Origin not allowed, channel switched off, or the token belongs to another channel |
+| 429 | `rate_limited` | Too many messages or conversations |
+| 500 | `internal_error` | Unexpected failure |
 
 ---
 
-## 5. Keamanan
+## 5. Security
 
-**Public key memang publik.** Nilainya bisa dibaca siapa saja yang membuka
-View Source. Karena itu `allowed_origins` bukan tembok — itu ganjalan yang
-membuat orang jujur tetap jujur. Yang benar-benar melindungi:
+**The public key is public.** Anyone who opens View Source can read it. So
+`allowed_origins` is not a wall — it is a speed bump that keeps honest people honest.
+What actually protects the widget:
 
-| Mekanisme | Detail |
+| Mechanism | Detail |
 | --- | --- |
-| **Binding sesi** | Satu baris `widget_sessions` terikat pada **tepat satu** `ticket_id`. `GET /messages` membaca kolom itu, tidak pernah dari request. Tidak ada tiket yang bisa disebut, jadi tidak ada yang bisa ditebak. |
-| **Origin check** | `allowed_origins` kosong = **tolak semua** (fail closed). Berisi `"*"` = izinkan semua. |
-| **Rate limit per IP** | Maksimum 15 percakapan baru per jam per IP, dihitung dari `ticket_contacts.visitor_ip`. |
-| **Rate limit per tiket** | Maksimum 20 pesan per menit per tiket, dihitung dari `ticket_comments`. |
-| **Batas panjang pesan** | 4000 karakter. |
-| **Token sekali pakai** | Disimpan sebagai sha256; dump database tidak berisi apa pun yang bisa diputar ulang. |
-| **Kedaluwarsa** | Token berlaku 30 hari. |
+| **Session binding** | One `widget_sessions` row is bound to **exactly one** `ticket_id`. `GET /messages` reads that column and never a request parameter. There is no ticket to name, so there is nothing to guess. |
+| **Origin check** | An empty `allowed_origins` = **deny everything** (fail closed). `"*"` = allow anything. |
+| **Per-IP rate limit** | At most 15 new conversations per hour per IP, counted from `ticket_contacts.visitor_ip`. |
+| **Per-ticket rate limit** | At most 20 messages per minute per ticket, counted from `ticket_comments`. |
+| **Message length cap** | 4000 characters. |
+| **One-way token** | Stored as sha256; a database dump contains nothing that can be replayed. |
+| **Expiry** | Tokens last 30 days. |
 
-Rate limit dihitung **di database**, bukan di memori Worker. Memori isolate
-Cloudflare bersifat per-isolate dan berumur pendek — penghitung di memori bisa
-dilewati hanya dengan memicu cold start. Jumlah baris tidak bisa.
+Rate limits are counted **in the database**, not in Worker memory. Cloudflare isolate
+memory is per-isolate and short-lived — an in-memory counter can be bypassed just by
+triggering a cold start. Row counts cannot.
 
-`clientIp()` memakai `cf-connecting-ip` lebih dulu (diisi Cloudflare, tidak bisa
-dipalsukan), dan `x-forwarded-for` hanya sebagai fallback saat development.
+`clientIp()` prefers `cf-connecting-ip` (set by Cloudflare, not forgeable) and falls back
+to `x-forwarded-for` only during development.
 
-### Kalau key bocor
+### If a key leaks
 
-Jangan hapus channel — **matikan** (Switch off). Channel nonaktif menolak semua
-request seketika, tetapi seluruh tiket dan riwayatnya tetap utuh untuk audit.
-Menghapus channel yang sudah punya tiket diblokir oleh foreign key, dan itu
-memang disengaja.
-
----
-
-## 6. Keterbatasan versi ini
-
-- **Teks saja.** Pengunjung belum bisa mengirim lampiran. Tiket yang dibuat dari
-  widget tetap bisa dilampiri file oleh staf dari halaman tiket.
-- **Belum ada Turnstile.** Kalau channel mulai disalahgunakan, langkah
-  berikutnya adalah menambahkan verifikasi Turnstile di `POST /session`.
-- **Belum ada notifikasi realtime.** Widget polling tiap 4 detik; tidak ada
-  WebSocket. Cukup untuk percakapan helpdesk, dan jauh lebih murah.
-- **Satu percakapan per pengunjung per channel.** Token di `localStorage`
-  mengikat satu percakapan aktif; membersihkan storage berarti memulai
-  percakapan baru.
+Do not delete the channel — **switch it off**. A deactivated channel rejects every request
+immediately, while all its tickets and history stay intact for audit. Deleting a channel
+that already has tickets is blocked by a foreign key, and that is deliberate.
 
 ---
 
-## 7. Berkas terkait
+## 6. Limitations of this version
 
-| Berkas | Isi |
+- **Text only.** Visitors cannot send attachments. A widget ticket can still be given
+  files by staff from the ticket page.
+- **No Turnstile yet.** If a channel starts being abused, the next step is adding
+  Turnstile verification to `POST /session`.
+- **No realtime notifications.** The widget polls every 4 seconds; there is no WebSocket.
+  Enough for helpdesk conversations, and far cheaper.
+- **One conversation per visitor per channel.** The token in `localStorage` binds one
+  active conversation; clearing storage means starting a new one.
+
+---
+
+## 7. Related files
+
+| File | Contents |
 | --- | --- |
-| `supabase/migrations/0010_channels.sql` | Tabel `channels`, `ticket_contacts`, `widget_sessions`, `notify()`, `ticket_actor_name()`, RLS |
-| `lib/widget/keys.ts` | Pembuatan public key & session token, hashing, pembacaan header |
-| `lib/widget/channels.ts` | Resolusi channel dari key, pengecekan origin |
-| `lib/widget/cors.ts` | CORS, pembungkus route, preflight |
-| `lib/widget/rate.ts` | Rate limit pesan & percakapan, deteksi IP |
-| `lib/widget/sessions.ts` | Cari / sentuh / buat sesi |
-| `lib/widget/conversations.ts` | Buat tiket, tambah pesan, baca percakapan |
-| `app/api/widget/v1/**` | Route HTTP |
-| `public/widget.js` | Widget sisi browser (vanilla, shadow DOM, tanpa dependensi) |
-| `services/channels.ts` | Daftar channel + jumlah tiket |
-| `app/actions/channels.ts` | Server action create / update / toggle / delete |
-| `components/admin/ChannelManager.tsx` | UI admin |
+| `supabase/migrations/0010_channels.sql` | `channels`, `ticket_contacts`, `widget_sessions` tables, `notify()`, `ticket_actor_name()`, RLS |
+| `lib/widget/keys.ts` | Public key + session token generation, hashing, header reading |
+| `lib/widget/channels.ts` | Resolving a channel from its key, origin checking |
+| `lib/widget/cors.ts` | CORS, route wrapper, preflight |
+| `lib/widget/rate.ts` | Message and conversation rate limits, IP detection |
+| `lib/widget/sessions.ts` | Find / touch / create a session |
+| `lib/widget/conversations.ts` | Create the ticket, append a message, read the conversation |
+| `app/api/widget/v1/**` | HTTP routes |
+| `public/widget.js` | The browser-side widget (vanilla, shadow DOM, no dependencies) |
+| `services/channels.ts` | Channel list + ticket counts |
+| `app/actions/channels.ts` | Server actions for create / update / toggle / delete |
+| `components/admin/ChannelManager.tsx` | Admin UI |
 
 ---
 
-## 8. Uji cepat
+## 8. Quick test
 
 ```bash
 # 1. config
 curl -s -H "Origin: https://example.com" -H "X-Widget-Key: wk_…" \
   http://localhost:3000/api/widget/v1/config
 
-# 2. mulai percakapan
+# 2. start a conversation
 TOKEN=$(curl -s -X POST http://localhost:3000/api/widget/v1/session \
   -H "Origin: https://example.com" -H "X-Widget-Key: wk_…" \
   -H "Content-Type: application/json" \
-  -d '{"name":"Dewi","email":"dewi@example.com","message":"Halo"}' \
+  -d '{"name":"Dewi","email":"dewi@example.com","message":"Hello"}' \
   | python3 -c "import sys,json;print(json.load(sys.stdin)['data']['token'])")
 
-# 3. baca
+# 3. read it back
 curl -s -H "Origin: https://example.com" -H "X-Widget-Key: wk_…" \
   -H "X-Widget-Token: $TOKEN" http://localhost:3000/api/widget/v1/messages
 ```
 
-Cek juga di **Admin → Channels**: jumlah tiket per channel, dan di
-**Tickets → All** tiket muncul dengan badge `via widget` dan nama pengunjung.
+Also check **Admin → Channels** for the per-channel ticket counts, and **Tickets → All**,
+where the new ticket appears with a `via widget` badge and the visitor's name.
 
-`npm run verify` menutup bagian widget dengan 18 pemeriksaan di level basis
-data (tanpa perlu server jalan): profil mesin bisa dibuat, `source` dan
-`channel_id` harus sepakat, `notify()` melewati profil mesin, nama pengunjung
-muncul di `ticket_actor_name()`, RLS `ticket_contacts` dan `widget_sessions`,
-serta channel bertiket tidak bisa dihapus.
+`npm run verify` closes with 18 widget checks at the database level (no running server
+needed): the machine profile can be created, `source` and `channel_id` must agree,
+`notify()` skips machine profiles, the visitor's name surfaces through
+`ticket_actor_name()`, RLS on `ticket_contacts` and `widget_sessions`, and a channel with
+tickets cannot be deleted.
 
-Yang **belum** tercakup tes otomatis: empat server action di
-`app/actions/channels.ts`. Semuanya tipis — `assertAdmin()`, validasi zod, lalu
-query — dan sudah diverifikasi manual sekali (buat, ubah, matikan, hapus, plus
-penolakan hapus saat sudah ada tiket).
+What automated tests do **not** cover: the four server actions in
+`app/actions/channels.ts`. They are all thin — `assertAdmin()`, zod validation, then a
+query — and were verified by hand once (create, update, switch off, delete, plus the
+refusal to delete once a ticket exists).

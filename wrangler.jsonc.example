@@ -1,4 +1,4 @@
-// Copy to `wrangler.jsonc` and fill in the four values marked TODO.
+// Copy to `wrangler.jsonc` and fill in the values marked TODO.
 //
 // It is not committed because it is the one file that ties this checkout to a
 // particular Cloudflare account and Supabase project. Nothing in it is a
@@ -41,6 +41,12 @@
 
   "observability": { "enabled": true },
 
+  // Optional. The deployed demo attaches its domain in the dashboard instead
+  // (Workers -> Settings -> Domains & Routes -> Custom Domain), which is why
+  // there is no route here. Uncomment if you would rather keep it in config.
+  //
+  // "routes": [{ "pattern": "ticket.example.com", "custom_domain": true }],
+
   // Public by design — these ship to the browser anyway, and OpenNext needs
   // them on `process.env` at runtime, not just at build time. Everything that
   // is actually secret (service-role key, bot token, webhook secret) lives in
@@ -53,5 +59,9 @@
     // TODO: your bots, without the leading @
     "NEXT_PUBLIC_TELEGRAM_BOT_USERNAME": "your_employee_bot",
     "NEXT_PUBLIC_TELEGRAM_STAFF_BOT_USERNAME": "your_staff_bot"
+
+    // Note there is no NEXT_PUBLIC_APP_URL. The channels page builds the embed
+    // snippet from the request's own host header, so the same Worker serves the
+    // right snippet on workers.dev and on a custom domain without a rebuild.
   }
 }
