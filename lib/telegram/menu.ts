@@ -1,25 +1,23 @@
 import "server-only";
 
-import {
-  deleteMyCommands,
-  setMyCommands,
-  type BotCommand,
-} from "@/lib/telegram/client";
+import type { BotCommand } from "@/lib/telegram/client";
+import { telegramApi } from "@/lib/telegram/client";
+import type { BotKind } from "@/lib/telegram/bots";
 
 /**
- * Role-aware command menu.
+ * One command menu per bot.
  *
- * Telegram has no idea what a role is, so "employees see less than IT staff" is
- * expressed with command *scopes*: one `default` list that everyone inherits,
- * plus a per-chat override installed against the staff member's own chat_id.
- * An employee therefore sees a shorter ☰ menu, and a staff member sees the
- * queue/claim/close commands without any extra screen in the bot.
+ * There is no role branching here any more. The old single bot picked between a
+ * short and a long list based on the caller's role, which meant installing a
+ * per-chat override for every staff member and remembering to delete it on
+ * demotion. Now the employee bot simply *has* the employee list and the staff
+ * bot *has* the staff list, so the menu cannot disagree with the bot you are
+ * talking to.
  *
- * The menu is presentation only. Every staff-only command is guarded again in
- * `commands.ts`, and RLS is the final word — a menu is not a permission system.
+ * The menu is still presentation only: RLS is the enforcement.
  */
 
-const BASE_COMMANDS: BotCommand[] = [
+const EMPLOYEE_COMMANDS: BotCommand[] = [
   { command: "new", description: "Buat tiket baru" },
   { command: "tickets", description: "Tiket milik kamu" },
   { command: "ticket", description: "Lihat satu tiket: /ticket IT-000004" },
@@ -45,68 +43,38 @@ const STAFF_COMMANDS: BotCommand[] = [
   { command: "unlink", description: "Putuskan akun Telegram ini" },
 ];
 
-export function isStaffRole(role: string) {
-  return role === "it_support" || role === "admin";
+const COMMANDS: Record<BotKind, BotCommand[]> = {
+  employee: EMPLOYEE_COMMANDS,
+  staff: STAFF_COMMANDS,
+};
+
+export function commandsFor(bot: BotKind) {
+  return COMMANDS[bot];
 }
 
-/** Installs the employee list as the fallback everyone inherits. */
-export async function registerDefaultCommands() {
-  return setMyCommands(BASE_COMMANDS, { type: "default" });
+export async function registerDefaultCommands(bot: BotKind) {
+  return telegramApi(bot).setMyCommands(COMMANDS[bot], { type: "default" });
 }
 
 /**
- * Module-level flag: the default list is global to the bot, not per chat, so it
- * only has to be installed once per isolate. Re-registering on every cold start
- * is harmless — the call is idempotent — but there is no reason to do it on
- * every message.
+ * Module-level flags: a default list belongs to the bot, not to a chat, so it
+ * only has to be installed once per isolate. Re-registering is idempotent and
+ * harmless, but there is no reason to do it on every message.
  */
-let defaultCommandsEnsured = false;
+const ensured: Partial<Record<BotKind, boolean>> = {};
 
 /**
- * Keeps the ☰ menu of *everyone who never linked* in step with the code.
+ * Keeps the ☰ menu in step with the code.
  *
  * Deliberately fire-and-forget: a menu is a convenience, and failing to install
  * one must never stop a ticket from being created.
  */
-export function ensureDefaultCommands() {
-  if (defaultCommandsEnsured) return;
-  defaultCommandsEnsured = true;
+export function ensureDefaultCommands(bot: BotKind) {
+  if (ensured[bot]) return;
+  ensured[bot] = true;
 
-  void registerDefaultCommands().catch((error) => {
-    defaultCommandsEnsured = false;
-    console.error("[telegram] registerDefaultCommands failed:", error);
+  void registerDefaultCommands(bot).catch((error) => {
+    ensured[bot] = false;
+    console.error(`[telegram:${bot}] registerDefaultCommands failed:`, error);
   });
-}
-
-/**
- * Gives one chat the menu its role deserves.
- *
- * Staff get a chat-scoped override; everyone else gets theirs *deleted*, which
- * is what makes a demotion take effect — a stale override would otherwise
- * outlive the promotion that created it.
- */
-export async function syncCommandMenu(chatId: number, role: string) {
-  const scope = { type: "chat", chat_id: chatId } as const;
-
-  if (isStaffRole(role)) {
-    return setMyCommands(STAFF_COMMANDS, scope);
-  }
-
-  return deleteMyCommands(scope);
-}
-
-/**
- * Repairs the menu of an already-linked user.
- *
- * Called on `/start` and `/help` because a role change happens in the web app,
- * where the bot is not watching; these two commands are how someone tells it to
- * look again.
- */
-export async function refreshCommandMenu(chatId: number, role: string) {
-  try {
-    await syncCommandMenu(chatId, role);
-  } catch (error) {
-    // A broken menu must never take down the command that triggered the sync.
-    console.error("[telegram] syncCommandMenu failed:", error);
-  }
 }

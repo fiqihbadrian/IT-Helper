@@ -26,7 +26,6 @@ export interface Database {
           email: string;
           role: string;
           department_id: string | null;
-          telegram_user_id: number | null;
           avatar_url: string | null;
           is_active: boolean;
           created_at: string;
@@ -38,7 +37,6 @@ export interface Database {
           email: string;
           role?: string;
           department_id?: string | null;
-          telegram_user_id?: number | null;
           avatar_url?: string | null;
           is_active?: boolean;
           created_at?: string;
@@ -50,11 +48,31 @@ export interface Database {
           email?: string;
           role?: string;
           department_id?: string | null;
-          telegram_user_id?: number | null;
           avatar_url?: string | null;
           is_active?: boolean;
           created_at?: string;
           updated_at?: string;
+        };
+        Relationships: [];
+      };
+      telegram_links: {
+        Row: {
+          profile_id: string;
+          bot: string;
+          chat_id: number;
+          linked_at: string;
+        };
+        Insert: {
+          profile_id: string;
+          bot: string;
+          chat_id: number;
+          linked_at?: string;
+        };
+        Update: {
+          profile_id?: string;
+          bot?: string;
+          chat_id?: number;
+          linked_at?: string;
         };
         Relationships: [];
       };
@@ -288,9 +306,18 @@ export interface Database {
         }>;
       };
       create_telegram_link_code: {
-        Args: Record<string, never>;
+        Args: { p_bot?: string };
         Returns: Array<{ code: string; expires_at: string }>;
       };
+      profile_for_telegram_chat: {
+        Args: { p_bot: string; p_chat_id: number };
+        Returns: Array<{ user_id: string; full_name: string; role: string; email: string }>;
+      };
+      redeem_telegram_code: {
+        Args: { p_code: string; p_bot: string; p_chat_id: number };
+        Returns: Array<{ user_id: string; full_name: string; role: string }>;
+      };
+      unlink_telegram: { Args: { p_bot: string; p_chat_id: number }; Returns: boolean };
     };
     Enums: Record<string, never>;
     CompositeTypes: Record<string, never>;

@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 
 import { createAdminClient } from "@/lib/supabase/admin";
 import { publicEnv, telegramEnv } from "@/lib/env";
+import type { BotKind } from "@/lib/telegram/bots";
 import { ALLOWED_UPLOAD_MIME_TYPES, MAX_UPLOAD_BYTES } from "@/lib/constants";
 
 /**
@@ -23,9 +24,10 @@ interface TelegramFile {
 }
 
 export async function downloadTelegramFile(
+  bot: BotKind,
   fileId: string,
 ): Promise<{ buffer: Buffer; filePath: string } | null> {
-  const token = telegramEnv.botToken();
+  const token = telegramEnv.botToken(bot);
 
   const infoResponse = await fetch(`${API}/bot${token}/getFile?file_id=${encodeURIComponent(fileId)}`, {
     cache: "no-store",

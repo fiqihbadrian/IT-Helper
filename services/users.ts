@@ -11,7 +11,7 @@ export async function listProfiles(db: Db): Promise<ProfileWithDepartment[]> {
   const { data, error } = await db
     .from("profiles")
     .select(
-      `id, full_name, email, role, department_id, telegram_user_id, avatar_url,
+      `id, full_name, email, role, department_id, avatar_url,
        is_active, created_at, updated_at,
        department:departments ( id, name )`,
     )

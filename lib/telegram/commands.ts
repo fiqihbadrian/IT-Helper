@@ -1,13 +1,15 @@
 import "server-only";
 
 import { PRIORITY_META, STATUS_META } from "@/lib/constants";
-import {
-  answerCallbackQuery,
-  sendMessage,
-  type InlineKeyboardButton,
-  type TelegramCallbackQuery,
-  type TelegramMessage,
+import { isStaffRole, type BotKind } from "@/lib/telegram/bots";
+import type {
+  InlineKeyboardButton,
+  TelegramApi,
+  TelegramCallbackQuery,
+  TelegramMessage,
 } from "@/lib/telegram/client";
+import { telegramApi } from "@/lib/telegram/client";
+import { ensureDefaultCommands } from "@/lib/telegram/menu";
 import {
   clearSession,
   escapeMarkdown as md,
@@ -38,23 +40,43 @@ import {
   type BotTicketRow,
   type StaffQueue,
 } from "@/lib/telegram/tickets";
-import {
-  ensureDefaultCommands,
-  isStaffRole,
-  refreshCommandMenu,
-} from "@/lib/telegram/menu";
 import { attachPhoto } from "@/lib/telegram/attachments";
 import type { TicketPriority, TicketStatus } from "@/types";
 
 /**
- * Commands the ☰ menu only shows to IT staff, and which are refused for anyone
- * else. The menu is presentation; this set is the guard; RLS is the enforcement.
+ * Which bot is answering, and the API client bound to its token.
+ *
+ * Threaded explicitly through every function rather than read from a module
+ * global: on Cloudflare Workers one isolate serves both bots concurrently, so a
+ * "current bot" would leak across requests.
+ */
+export interface BotContext {
+  bot: BotKind;
+  api: TelegramApi;
+}
+
+export function botContext(bot: BotKind): BotContext {
+  return { bot, api: telegramApi(bot) };
+}
+
+/** True on the staff bot, where everybody linked is on the bench by definition. */
+function isStaffBot(ctx: BotContext) {
+  return ctx.bot === "staff";
+}
+
+/**
+ * The staff commands, which only exist on the staff bot.
+ *
+ * The employee bot does not merely hide these from its menu — it has no path to
+ * them at all, because the only account that can link the staff bot is a staff
+ * account. This set is here so an employee who types `/queue` out of curiosity
+ * gets a straight answer instead of "unknown command".
  */
 const STAFF_ONLY = new Set(["queue", "open", "unassigned", "find", "claim", "close"]);
 
-function helpText(role: string) {
+function helpText(ctx: BotContext) {
   const lines = [
-    "*IT Helpdesk bot*",
+    isStaffBot(ctx) ? "*IT Helpdesk — bot tim IT*" : "*IT Helpdesk — bot karyawan*",
     "",
     "*Buat tiket*",
     "`/new` — laporkan masalah, langkah demi langkah",
@@ -65,7 +87,7 @@ function helpText(role: string) {
     "`/reply IT-000004 pesan` — balas langsung dari sini",
   ];
 
-  if (isStaffRole(role)) {
+  if (isStaffBot(ctx)) {
     lines.push(
       "",
       "*Antrean tim IT*",
@@ -89,16 +111,31 @@ function helpText(role: string) {
   return lines.join("\n");
 }
 
-const WELCOME = [
-  "*Selamat datang di IT Helpdesk*",
-  "",
-  "Bot ini terhubung ke sistem tiket yang sama dengan web.",
-  "",
-  "Untuk mulai, hubungkan akun:",
-  "1. Buka *Profil → Telegram* di web",
-  "2. Salin kode yang muncul",
-  "3. Kirim ke sini sebagai `/start KODE`",
-].join("\n");
+function welcomeText(ctx: BotContext) {
+  const lines = [
+    isStaffBot(ctx)
+      ? "*Bot tim IT — IT Helpdesk*"
+      : "*Selamat datang di IT Helpdesk*",
+    "",
+    isStaffBot(ctx)
+      ? "Bot ini untuk tim IT: antrean, ambil tiket, ubah status."
+      : "Bot ini terhubung ke sistem tiket yang sama dengan web.",
+    "",
+    "Untuk mulai, hubungkan akun:",
+    "1. Buka *Profil → Telegram* di web",
+    "2. Salin kode yang muncul",
+    "3. Kirim ke sini sebagai `/start KODE`",
+  ];
+
+  if (isStaffBot(ctx)) {
+    lines.push(
+      "",
+      "_Hanya akun `it_support` dan `admin` yang bisa menghubungkan bot ini._",
+    );
+  }
+
+  return lines.join("\n");
+}
 
 /* -------------------------------------------------------------------------- */
 /* Formatting                                                                  */
@@ -150,7 +187,7 @@ function priorityKeyboard(): InlineKeyboardButton[][] {
   ];
 }
 
-function ticketActionsKeyboard(ticket: BotTicketRow, isStaff: boolean): InlineKeyboardButton[][] {
+function ticketActionsKeyboard(ticket: BotTicketRow, staff: boolean): InlineKeyboardButton[][] {
   const rows: InlineKeyboardButton[][] = [
     [
       { text: "Balas", callback_data: `r:${ticket.id}` },
@@ -158,7 +195,7 @@ function ticketActionsKeyboard(ticket: BotTicketRow, isStaff: boolean): InlineKe
     ],
   ];
 
-  if (isStaff) {
+  if (staff) {
     if (!ticket.assignee) {
       rows.push([{ text: "Ambil tiket ini", callback_data: `a:${ticket.id}` }]);
     }
@@ -189,63 +226,67 @@ function ticketActionsKeyboard(ticket: BotTicketRow, isStaff: boolean): InlineKe
 /* Entry point                                                                 */
 /* -------------------------------------------------------------------------- */
 
-export async function handleUpdate(update: {
-  update_id: number;
-  message?: TelegramMessage;
-  callback_query?: TelegramCallbackQuery;
-}) {
-  // Anyone who never linked has no chat-scoped menu, so the fallback list is
-  // what they see. Refresh it from the code on the first update of an isolate.
-  ensureDefaultCommands();
+export async function handleUpdate(
+  bot: BotKind,
+  update: {
+    update_id: number;
+    message?: TelegramMessage;
+    callback_query?: TelegramCallbackQuery;
+  },
+): Promise<{ userId?: string }> {
+  const ctx = botContext(bot);
+
+  // A default list belongs to the bot, not a chat, so it is installed once per
+  // isolate. A brand new bot with no list shows an empty ☰ menu until then.
+  ensureDefaultCommands(bot);
 
   if (update.callback_query) {
-    await handleCallback(update.callback_query);
-    return;
+    return { userId: await handleCallback(ctx, update.callback_query) };
   }
 
   const message = update.message;
-  if (!message?.chat) return;
-  await handleMessage(message);
+  if (!message?.chat) return {};
+  return { userId: await handleMessage(ctx, message) };
 }
 
 /* -------------------------------------------------------------------------- */
 /* Messages                                                                    */
 /* -------------------------------------------------------------------------- */
 
-async function handleMessage(message: TelegramMessage) {
+async function handleMessage(ctx: BotContext, message: TelegramMessage) {
   const chatId = message.chat.id;
   const text = (message.text ?? message.caption)?.trim();
   const photo = message.photo?.at(-1);
   const document = message.document;
 
   // Anything queued for this user rides along with the next thing they send.
-  void flushNotifications(chatId);
+  void flushNotifications(ctx.bot, chatId);
 
   if (text?.startsWith("/")) {
     const [rawCommand, ...rest] = text.split(/\s+/);
     const command = rawCommand.slice(1).split("@")[0].toLowerCase();
-    await handleCommand(chatId, command, rest.join(" ").trim());
-    return;
+    return await handleCommand(ctx, chatId, command, rest.join(" ").trim());
   }
 
-  const session = await getSession(chatId);
+  const session = await getSession(ctx.bot, chatId);
   if (!session) {
-    await sendMessage(chatId, WELCOME);
-    return;
+    await ctx.api.sendMessage(chatId, welcomeText(ctx));
+    return undefined;
   }
 
   // Screenshots are half of every real IT report, so photos are first-class.
   if (photo || document) {
-    await handleUpload(chatId, session, photo?.file_id ?? document?.file_id, text);
-    return;
+    await handleUpload(ctx, chatId, session, photo?.file_id ?? document?.file_id, text);
+    return session.userId;
   }
 
   if (!text) {
-    await sendMessage(chatId, "Kirim pesan teks ya. Ketik /help untuk melihat perintah.");
-    return;
+    await ctx.api.sendMessage(chatId, "Kirim pesan teks ya. Ketik /help untuk melihat perintah.");
+    return session.userId;
   }
 
-  await handleText(chatId, session, text);
+  await handleText(ctx, chatId, session, text);
+  return session.userId;
 }
 
 /**
@@ -253,6 +294,7 @@ async function handleMessage(message: TelegramMessage) {
  * exists; a photo sent while replying goes straight onto that ticket.
  */
 async function handleUpload(
+  ctx: BotContext,
   chatId: number,
   session: BotSession,
   fileId: string | undefined,
@@ -263,19 +305,19 @@ async function handleUpload(
 
   if (state === "new:category" || state === "new:title" || state === "new:description") {
     if (caption && caption.length >= 10) {
-      await setSession(chatId, userId, "new:priority", {
+      await setSession(ctx.bot, chatId, userId, "new:priority", {
         ...draft,
         photoFileId: fileId,
         description: caption.slice(0, 4000),
       });
-      await sendMessage(chatId, "Foto dan deskripsi tersimpan. Seberapa mendesak?", {
+      await ctx.api.sendMessage(chatId, "Foto dan deskripsi tersimpan. Seberapa mendesak?", {
         keyboard: priorityKeyboard(),
       });
       return;
     }
 
-    await setSession(chatId, userId, "new:description", { ...draft, photoFileId: fileId });
-    await sendMessage(
+    await setSession(ctx.bot, chatId, userId, "new:description", { ...draft, photoFileId: fileId });
+    await ctx.api.sendMessage(
       chatId,
       draft.title
         ? "Foto tersimpan. Sekarang tulis deskripsi masalahnya."
@@ -285,11 +327,11 @@ async function handleUpload(
   }
 
   if (state === "reply" && draft.ticketId) {
-    await sendMessage(chatId, "Mengunggah foto…");
-    const result = await attachPhoto(userId, draft.ticketId, { file_id: fileId }, caption);
-    await clearSession(chatId);
+    await ctx.api.sendMessage(chatId, "Mengunggah foto…");
+    const result = await attachPhoto(ctx.bot, userId, draft.ticketId, { file_id: fileId }, caption);
+    await clearSession(ctx.bot, chatId);
 
-    await sendMessage(
+    await ctx.api.sendMessage(
       chatId,
       result.ok
         ? `Foto terlampir ke *#${md(draft.ticketNumber ?? "")}*.`
@@ -298,145 +340,174 @@ async function handleUpload(
     return;
   }
 
-  await sendMessage(
+  await ctx.api.sendMessage(
     chatId,
     "Kirim foto sambil membuat tiket (/new) atau sambil membalas tiket.",
   );
 }
 
-async function handleCommand(chatId: number, command: string, args: string) {
+async function handleCommand(ctx: BotContext, chatId: number, command: string, args: string) {
   if (command === "start") {
     if (args) {
-      await handleLink(chatId, args);
-      return;
+      await handleLink(ctx, chatId, args);
+      return undefined;
     }
 
-    const profile = await profileForChat(chatId);
-    if (profile) {
-      // `/start` is also how someone asks the bot to notice a role change made
-      // in the web app, since nothing tells the bot when that happens.
-      await refreshCommandMenu(chatId, profile.role);
-      await sendMessage(
-        chatId,
-        `Halo *${md(profile.full_name)}* 👋\n\n` +
-          (isStaffRole(profile.role)
-            ? "Ketik /queue untuk melihat antrean tim IT, atau /new untuk membuat tiket."
-            : "Ketik /new untuk membuat tiket, atau /tickets untuk melihat tiket kamu."),
-      );
-    } else {
-      await sendMessage(chatId, WELCOME);
+    const profile = await profileForChat(ctx.bot, chatId);
+    if (!profile) {
+      await ctx.api.sendMessage(chatId, welcomeText(ctx));
+      return undefined;
     }
-    return;
+
+    if (!(await ensureEligible(ctx, chatId, profile))) return undefined;
+
+    await ctx.api.sendMessage(
+      chatId,
+      `Halo *${md(profile.full_name)}* 👋\n\n` +
+        (isStaffBot(ctx)
+          ? "Ketik /queue untuk melihat antrean tim IT, atau /new untuk membuat tiket."
+          : "Ketik /new untuk membuat tiket, atau /tickets untuk melihat tiket kamu."),
+    );
+    return profile.user_id;
   }
 
   if (command === "help") {
-    const profile = await profileForChat(chatId);
-    if (profile) await refreshCommandMenu(chatId, profile.role);
-    await sendMessage(chatId, helpText(profile?.role ?? "employee"));
-    return;
+    const profile = await profileForChat(ctx.bot, chatId);
+    if (profile && !(await ensureEligible(ctx, chatId, profile))) return undefined;
+
+    await ctx.api.sendMessage(chatId, helpText(ctx));
+    return profile?.user_id;
   }
 
   if (command === "unlink") {
-    const removed = await unlinkChat(chatId);
-    await clearSession(chatId);
-    // Drop the chat-scoped menu too, so a former staff member does not keep a
-    // menu full of commands they can no longer run.
-    await refreshCommandMenu(chatId, "employee");
-    await sendMessage(
+    const removed = await unlinkChat(ctx.bot, chatId);
+    await clearSession(ctx.bot, chatId);
+    await ctx.api.sendMessage(
       chatId,
       removed
         ? "Akun Telegram sudah diputus. Kirim /start KODE untuk menghubungkan lagi."
         : "Akun ini belum terhubung.",
     );
-    return;
+    return undefined;
   }
 
   // everything below needs a linked account
-  const profile = await profileForChat(chatId);
+  const profile = await profileForChat(ctx.bot, chatId);
   if (!profile) {
-    await sendMessage(chatId, WELCOME);
-    return;
+    await ctx.api.sendMessage(chatId, welcomeText(ctx));
+    return undefined;
   }
 
-  if (STAFF_ONLY.has(command) && !isStaffRole(profile.role)) {
-    await sendMessage(
+  if (!(await ensureEligible(ctx, chatId, profile))) return undefined;
+
+  if (STAFF_ONLY.has(command) && !isStaffBot(ctx)) {
+    await ctx.api.sendMessage(
       chatId,
-      "Perintah itu hanya untuk tim IT.\n\n" + helpText(profile.role),
+      "Perintah itu ada di bot tim IT.\n\nBot ini untuk karyawan: buat dan pantau tiketmu sendiri.",
     );
-    return;
+    return profile.user_id;
   }
 
   switch (command) {
     case "new":
-      await startNewTicket(chatId, profile.user_id);
-      return;
+      await startNewTicket(ctx, chatId, profile.user_id);
+      break;
 
     case "tickets":
-      await showTicketList(chatId, profile.user_id);
-      return;
+      await showTicketList(ctx, chatId, profile.user_id);
+      break;
 
     case "ticket":
-      await showTicket(chatId, profile.user_id, profile.role, args);
-      return;
+      await showTicket(ctx, chatId, profile.user_id, args);
+      break;
 
     case "reply":
-      await replyByNumber(chatId, profile.user_id, profile.role, args);
-      return;
+      await replyByNumber(ctx, chatId, profile.user_id, args);
+      break;
 
     case "queue":
-      await showQueue(chatId, profile.user_id, "all");
-      return;
+      await showQueue(ctx, chatId, profile.user_id, "all");
+      break;
 
     case "open":
-      await showQueue(chatId, profile.user_id, "open");
-      return;
+      await showQueue(ctx, chatId, profile.user_id, "open");
+      break;
 
     case "unassigned":
-      await showQueue(chatId, profile.user_id, "unassigned");
-      return;
+      await showQueue(ctx, chatId, profile.user_id, "unassigned");
+      break;
 
     case "find":
-      await showSearch(chatId, profile.user_id, args);
-      return;
+      await showSearch(ctx, chatId, profile.user_id, args);
+      break;
 
     case "claim":
-      await claimByNumberCommand(chatId, profile.user_id, profile.role, args);
-      return;
+      await claimByNumberCommand(ctx, chatId, profile.user_id, args);
+      break;
 
     case "close":
-      await closeByNumberCommand(chatId, profile.user_id, profile.role, args);
-      return;
+      await closeByNumberCommand(ctx, chatId, profile.user_id, args);
+      break;
 
     case "status":
-      await showStatus(chatId, profile);
-      return;
+      await showStatus(ctx, chatId, profile);
+      break;
 
     default:
-      await sendMessage(
+      await ctx.api.sendMessage(
         chatId,
-        `Perintah \`/${command}\` tidak dikenal.\n\n${helpText(profile.role)}`,
+        `Perintah \`/${command}\` tidak dikenal.\n\n${helpText(ctx)}`,
       );
   }
+
+  return profile.user_id;
 }
 
-async function handleLink(chatId: number, code: string) {
-  const linked = await redeemLinkCode(code, chatId);
+/**
+ * The staff bot is for the bench, and a link outlives a role change: someone
+ * demoted in the web app keeps a working chat with a staff menu until something
+ * notices. Rather than half-serve them, every entry point re-checks and unlinks.
+ *
+ * RLS would refuse the writes anyway — this is about not pretending otherwise.
+ */
+async function ensureEligible(
+  ctx: BotContext,
+  chatId: number,
+  profile: { role: string },
+): Promise<boolean> {
+  if (!isStaffBot(ctx) || isStaffRole(profile.role)) return true;
+
+  await unlinkChat(ctx.bot, chatId);
+  await clearSession(ctx.bot, chatId);
+  await ctx.api.sendMessage(
+    chatId,
+    "Akunmu bukan lagi bagian tim IT, jadi bot ini diputus.\n\n" +
+      "Untuk melaporkan masalah, pakai bot karyawan. Hubungi admin kalau ini keliru.",
+  );
+  return false;
+}
+
+async function handleLink(ctx: BotContext, chatId: number, code: string) {
+  const linked = await redeemLinkCode(ctx.bot, code, chatId);
 
   if (!linked) {
-    await sendMessage(
+    await ctx.api.sendMessage(
       chatId,
-      "Kode tidak valid atau sudah kedaluwarsa.\n\nBuat kode baru di web: *Profil → Telegram*.",
+      "Kode tidak valid atau sudah kedaluwarsa.\n\n" +
+        "Buat kode baru di web: *Profil → Telegram*." +
+        (isStaffBot(ctx)
+          ? "\n\nPastikan kode dibuat dari panel *Bot Tim IT*, bukan panel bot karyawan."
+          : ""),
     );
     return;
   }
 
-  await clearSession(chatId);
-  await refreshCommandMenu(chatId, linked.role);
-  await sendMessage(
+  await clearSession(ctx.bot, chatId);
+  await ctx.api.sendMessage(
     chatId,
     `Terhubung sebagai *${md(linked.full_name)}* (${md(linked.role)}).\n\n` +
-      (isStaffRole(linked.role)
-        ? "Menu perintahnya sudah ditambah: /queue, /open, /unassigned, /find, /claim, /close."
+      (isStaffBot(ctx)
+        ? "Menu perintahnya: /queue, /open, /unassigned, /find, /claim, /close."
         : "Ketik /new untuk membuat tiket."),
   );
 }
@@ -445,17 +516,17 @@ async function handleLink(chatId: number, code: string) {
 /* Open a ticket — the main flow                                               */
 /* -------------------------------------------------------------------------- */
 
-async function startNewTicket(chatId: number, userId: string) {
+async function startNewTicket(ctx: BotContext, chatId: number, userId: string) {
   const categories = await listCategories();
 
   if (!categories.length) {
-    await sendMessage(chatId, "Belum ada kategori aktif. Hubungi admin.");
+    await ctx.api.sendMessage(chatId, "Belum ada kategori aktif. Hubungi admin.");
     return;
   }
 
-  await setSession(chatId, userId, "new:category", {});
+  await setSession(ctx.bot, chatId, userId, "new:category", {});
 
-  await sendMessage(chatId, "*Buat tiket baru*\n\nPilih kategori kendala:", {
+  await ctx.api.sendMessage(chatId, "*Buat tiket baru*\n\nPilih kategori kendala:", {
     keyboard: [
       ...categories.map((category) => [
         { text: category.name, callback_data: `c:${category.id}` },
@@ -465,18 +536,21 @@ async function startNewTicket(chatId: number, userId: string) {
   });
 }
 
-async function handleText(chatId: number, session: BotSession, text: string) {
+async function handleText(ctx: BotContext, chatId: number, session: BotSession, text: string) {
   const { userId, state, draft } = session;
 
   switch (state) {
     case "new:title": {
       if (text.length < 4) {
-        await sendMessage(chatId, "Judul terlalu pendek. Tulis minimal 4 karakter.");
+        await ctx.api.sendMessage(chatId, "Judul terlalu pendek. Tulis minimal 4 karakter.");
         return;
       }
 
-      await setSession(chatId, userId, "new:description", { ...draft, title: text.slice(0, 160) });
-      await sendMessage(
+      await setSession(ctx.bot, chatId, userId, "new:description", {
+        ...draft,
+        title: text.slice(0, 160),
+      });
+      await ctx.api.sendMessage(
         chatId,
         `Judul: *${md(text.slice(0, 160))}*\n\nSekarang jelaskan masalahnya. Sertakan pesan error kalau ada.`,
       );
@@ -485,16 +559,19 @@ async function handleText(chatId: number, session: BotSession, text: string) {
 
     case "new:description": {
       if (text.length < 10) {
-        await sendMessage(chatId, "Deskripsi terlalu pendek. Jelaskan sedikit lebih detail.");
+        await ctx.api.sendMessage(
+          chatId,
+          "Deskripsi terlalu pendek. Jelaskan sedikit lebih detail.",
+        );
         return;
       }
 
-      await setSession(chatId, userId, "new:priority", {
+      await setSession(ctx.bot, chatId, userId, "new:priority", {
         ...draft,
         description: text.slice(0, 4000),
       });
 
-      await sendMessage(chatId, "Seberapa mendesak?", {
+      await ctx.api.sendMessage(chatId, "Seberapa mendesak?", {
         keyboard: priorityKeyboard(),
       });
       return;
@@ -502,15 +579,18 @@ async function handleText(chatId: number, session: BotSession, text: string) {
 
     case "reply": {
       if (!draft.ticketId) {
-        await clearSession(chatId);
-        await sendMessage(chatId, "Sesi balasan sudah tidak berlaku. Buka tiket lalu tekan Balas.");
+        await clearSession(ctx.bot, chatId);
+        await ctx.api.sendMessage(
+          chatId,
+          "Sesi balasan sudah tidak berlaku. Buka tiket lalu tekan Balas.",
+        );
         return;
       }
 
       const comment = await addComment(userId, draft.ticketId, text.slice(0, 5000));
-      await clearSession(chatId);
+      await clearSession(ctx.bot, chatId);
 
-      await sendMessage(
+      await ctx.api.sendMessage(
         chatId,
         comment
           ? `Balasan terkirim ke *#${md(draft.ticketNumber ?? "")}*.`
@@ -520,23 +600,23 @@ async function handleText(chatId: number, session: BotSession, text: string) {
     }
 
     default: {
-      await clearSession(chatId);
-      await sendMessage(chatId, `Ketik /help untuk melihat perintah yang tersedia.`);
+      await clearSession(ctx.bot, chatId);
+      await ctx.api.sendMessage(chatId, `Ketik /help untuk melihat perintah yang tersedia.`);
     }
   }
 }
 
 async function createFromDraft(
+  ctx: BotContext,
   chatId: number,
   userId: string,
-  role: string,
   session: BotSession,
   priority: TicketPriority,
 ) {
   const { draft } = session;
   if (!draft.title) {
-    await clearSession(chatId);
-    await sendMessage(chatId, "Draf tiket hilang. Mulai lagi dengan /new.");
+    await clearSession(ctx.bot, chatId);
+    await ctx.api.sendMessage(chatId, "Draf tiket hilang. Mulai lagi dengan /new.");
     return;
   }
 
@@ -549,24 +629,24 @@ async function createFromDraft(
     priority,
   });
 
-  await clearSession(chatId);
+  await clearSession(ctx.bot, chatId);
 
   if (!ticket) {
-    await sendMessage(chatId, "Gagal membuat tiket. Coba lagi sebentar.");
+    await ctx.api.sendMessage(chatId, "Gagal membuat tiket. Coba lagi sebentar.");
     return;
   }
 
   // the screenshot that was attached mid-draft, now that the ticket exists
   let photoNote = "";
   if (draft.photoFileId) {
-    const attached = await attachPhoto(userId, ticket.id, { file_id: draft.photoFileId });
+    const attached = await attachPhoto(ctx.bot, userId, ticket.id, { file_id: draft.photoFileId });
     if (attached.ok) photoNote = `\n\n📎 Foto terlampir: ${md(attached.name)}`;
   }
 
-  await sendMessage(
+  await ctx.api.sendMessage(
     chatId,
     `✅ *Tiket dibuat*\n\n${formatTicket(ticket)}${photoNote}\n\nTim IT akan segera menindaklanjuti. Kamu akan dapat notifikasi di sini setiap ada perubahan.`,
-    { keyboard: ticketActionsKeyboard(ticket, isStaffRole(role)) },
+    { keyboard: ticketActionsKeyboard(ticket, isStaffBot(ctx)) },
   );
 }
 
@@ -586,17 +666,22 @@ function renderTicketList(tickets: BotTicketRow[]) {
     .join("\n\n");
 }
 
-async function showTicketList(chatId: number, userId: string) {
+async function showTicketList(ctx: BotContext, chatId: number, userId: string) {
   const tickets = await listMyTickets(userId, 10);
 
   if (!tickets.length) {
-    await sendMessage(chatId, "Kamu belum punya tiket.\n\nKetik /new untuk membuat yang pertama.");
+    await ctx.api.sendMessage(
+      chatId,
+      "Kamu belum punya tiket.\n\nKetik /new untuk membuat yang pertama.",
+    );
     return;
   }
 
-  await sendMessage(chatId, `*Tiket kamu* (${tickets.length})\n\n${renderTicketList(tickets)}`, {
-    keyboard: ticketKeyboard(tickets),
-  });
+  await ctx.api.sendMessage(
+    chatId,
+    `*Tiket kamu* (${tickets.length})\n\n${renderTicketList(tickets)}`,
+    { keyboard: ticketKeyboard(tickets) },
+  );
 }
 
 /* -------------------------------------------------------------------------- */
@@ -610,19 +695,15 @@ const QUEUE_TITLE: Record<StaffQueue, string> = {
   mine: "Ditugaskan ke kamu",
 };
 
-async function showQueue(
-  chatId: number,
-  userId: string,
-  queue: StaffQueue,
-) {
+async function showQueue(ctx: BotContext, chatId: number, userId: string, queue: StaffQueue) {
   const tickets = await listQueue(userId, queue, 10);
 
   if (!tickets.length) {
-    await sendMessage(chatId, `Tidak ada tiket untuk *${md(QUEUE_TITLE[queue])}*.`);
+    await ctx.api.sendMessage(chatId, `Tidak ada tiket untuk *${md(QUEUE_TITLE[queue])}*.`);
     return;
   }
 
-  await sendMessage(
+  await ctx.api.sendMessage(
     chatId,
     `*${md(QUEUE_TITLE[queue])}* (${tickets.length})\n\n${renderTicketList(tickets)}\n\n` +
       "_Tekan nomor tiket untuk membuka, atau balas dengan `/reply IT-000004 pesan`._",
@@ -630,21 +711,21 @@ async function showQueue(
   );
 }
 
-async function showSearch(chatId: number, userId: string, args: string) {
+async function showSearch(ctx: BotContext, chatId: number, userId: string, args: string) {
   const query = args.trim();
   if (!query) {
-    await sendMessage(chatId, "Format: `/find printer`");
+    await ctx.api.sendMessage(chatId, "Format: `/find printer`");
     return;
   }
 
   const tickets = await searchTickets(userId, query, 10);
 
   if (!tickets.length) {
-    await sendMessage(chatId, `Tidak ada tiket yang cocok dengan *${md(query)}*.`);
+    await ctx.api.sendMessage(chatId, `Tidak ada tiket yang cocok dengan *${md(query)}*.`);
     return;
   }
 
-  await sendMessage(
+  await ctx.api.sendMessage(
     chatId,
     `*Hasil pencarian* \`${md(query)}\` (${tickets.length})\n\n${renderTicketList(tickets)}`,
     { keyboard: ticketKeyboard(tickets) },
@@ -666,18 +747,18 @@ function splitReference(args: string) {
  * session-based flow is still there behind the *Balas* button, but a plain
  * message should never be mistaken for a reply.
  */
-async function replyByNumber(chatId: number, userId: string, role: string, args: string) {
+async function replyByNumber(ctx: BotContext, chatId: number, userId: string, args: string) {
   const parsed = splitReference(args);
 
   if (!parsed) {
-    await sendMessage(chatId, "Format: `/reply IT-000004 pesanmu`");
+    await ctx.api.sendMessage(chatId, "Format: `/reply IT-000004 pesanmu`");
     return;
   }
 
   const ticket = await commentByNumber(userId, parsed.reference, parsed.body.slice(0, 5000));
 
   if (!ticket) {
-    await sendMessage(
+    await ctx.api.sendMessage(
       chatId,
       `Tiket *${md(parsed.reference)}* tidak ditemukan atau bukan milikmu.`,
     );
@@ -686,85 +767,108 @@ async function replyByNumber(chatId: number, userId: string, role: string, args:
 
   // A pending "next message is a reply" draft would otherwise swallow whatever
   // the user types next.
-  const session = await getSession(chatId);
-  if (session?.state === "reply") await clearSession(chatId);
+  const session = await getSession(ctx.bot, chatId);
+  if (session?.state === "reply") await clearSession(ctx.bot, chatId);
 
-  await sendMessage(
-    chatId,
-    `Balasan terkirim ke *#${md(ticket.ticket_number)}*.`,
-    { keyboard: ticketActionsKeyboard(ticket, isStaffRole(role)) },
-  );
+  await ctx.api.sendMessage(chatId, `Balasan terkirim ke *#${md(ticket.ticket_number)}*.`, {
+    keyboard: ticketActionsKeyboard(ticket, isStaffBot(ctx)),
+  });
 }
 
-async function claimByNumberCommand(chatId: number, userId: string, role: string, args: string) {
+async function claimByNumberCommand(
+  ctx: BotContext,
+  chatId: number,
+  userId: string,
+  args: string,
+) {
   const reference = args.trim();
   if (!reference) {
-    await sendMessage(chatId, "Format: `/claim IT-000004`");
+    await ctx.api.sendMessage(chatId, "Format: `/claim IT-000004`");
     return;
   }
 
   const ticket = await claimByNumber(userId, reference);
 
   if (!ticket) {
-    await sendMessage(
+    await ctx.api.sendMessage(
       chatId,
       `Tiket *${md(reference)}* tidak ditemukan, atau kamu tidak berhak mengambilnya.`,
     );
     return;
   }
 
-  await sendMessage(chatId, `*#${md(ticket.ticket_number)}* sekarang ditangani *${md(ticket.assignee ?? "kamu")}*.`);
-  await sendTicketDetail(chatId, userId, role, ticket);
+  await ctx.api.sendMessage(
+    chatId,
+    `*#${md(ticket.ticket_number)}* sekarang ditangani *${md(ticket.assignee ?? "kamu")}*.`,
+  );
+  await sendTicketDetail(ctx, chatId, userId, ticket);
 }
 
-async function closeByNumberCommand(chatId: number, userId: string, role: string, args: string) {
+async function closeByNumberCommand(
+  ctx: BotContext,
+  chatId: number,
+  userId: string,
+  args: string,
+) {
   const reference = args.trim();
   if (!reference) {
-    await sendMessage(chatId, "Format: `/close IT-000004`");
+    await ctx.api.sendMessage(chatId, "Format: `/close IT-000004`");
     return;
   }
 
   const ticket = await setStatusByNumber(userId, reference, "CLOSED");
 
   if (!ticket) {
-    await sendMessage(
+    await ctx.api.sendMessage(
       chatId,
       `Tiket *${md(reference)}* tidak ditemukan, atau hanya tim IT yang bisa menutupnya.`,
     );
     return;
   }
 
-  await sendMessage(chatId, `*#${md(ticket.ticket_number)}* ditutup.`);
-  await sendTicketDetail(chatId, userId, role, ticket);
+  await ctx.api.sendMessage(chatId, `*#${md(ticket.ticket_number)}* ditutup.`);
+  await sendTicketDetail(ctx, chatId, userId, ticket);
 }
 
-async function showTicket(chatId: number, userId: string, role: string, args: string) {
+async function showTicket(ctx: BotContext, chatId: number, userId: string, args: string) {
   const reference = args.trim();
   if (!reference) {
-    await sendMessage(chatId, "Format: `/ticket IT-000004`");
+    await ctx.api.sendMessage(chatId, "Format: `/ticket IT-000004`");
     return;
   }
 
   const ticket = await findTicketByNumber(userId, reference);
   if (!ticket) {
-    await sendMessage(chatId, `Tiket *${md(reference)}* tidak ditemukan atau bukan milikmu.`);
+    await ctx.api.sendMessage(
+      chatId,
+      `Tiket *${md(reference)}* tidak ditemukan atau bukan milikmu.`,
+    );
     return;
   }
 
-  await sendTicketDetail(chatId, userId, role, ticket);
+  await sendTicketDetail(ctx, chatId, userId, ticket);
 }
 
-async function sendTicketDetail(chatId: number, userId: string, role: string, ticket: BotTicketRow) {
+async function sendTicketDetail(
+  ctx: BotContext,
+  chatId: number,
+  userId: string,
+  ticket: BotTicketRow,
+) {
   const comments = await listComments(userId, ticket.id, 4);
 
-  await sendMessage(
+  await ctx.api.sendMessage(
     chatId,
     `${formatTicket(ticket)}\n\n*Percakapan terakhir*\n${formatConversation(comments)}`,
-    { keyboard: ticketActionsKeyboard(ticket, isStaffRole(role)) },
+    { keyboard: ticketActionsKeyboard(ticket, isStaffBot(ctx)) },
   );
 }
 
-async function showStatus(chatId: number, profile: { user_id: string; full_name: string; role: string }) {
+async function showStatus(
+  ctx: BotContext,
+  chatId: number,
+  profile: { user_id: string; full_name: string; role: string },
+) {
   const tickets = await listMyTickets(profile.user_id, 100);
   const open = tickets.filter(
     (ticket) => !["RESOLVED", "CLOSED"].includes(ticket.status),
@@ -778,10 +882,10 @@ async function showStatus(chatId: number, profile: { user_id: string; full_name:
     `Masih berjalan: ${open}`,
     `Selesai: ${tickets.length - open}`,
     "",
-    "Telegram: terhubung",
+    `Telegram: terhubung ke bot ${isStaffBot(ctx) ? "tim IT" : "karyawan"}`,
   ];
 
-  if (isStaffRole(profile.role)) {
+  if (isStaffBot(ctx)) {
     const [unassigned, mine] = await Promise.all([
       listQueue(profile.user_id, "unassigned", 100),
       listQueue(profile.user_id, "mine", 100),
@@ -795,126 +899,136 @@ async function showStatus(chatId: number, profile: { user_id: string; full_name:
     );
   }
 
-  await sendMessage(chatId, lines.join("\n"));
+  await ctx.api.sendMessage(chatId, lines.join("\n"));
 }
 
 /* -------------------------------------------------------------------------- */
 /* Callbacks                                                                   */
 /* -------------------------------------------------------------------------- */
 
-async function handleCallback(query: TelegramCallbackQuery) {
+async function handleCallback(ctx: BotContext, query: TelegramCallbackQuery) {
   const chatId = query.message?.chat.id;
   const data = query.data;
-  if (!chatId || !data) return;
+  if (!chatId || !data) return undefined;
 
   const [action, ...rest] = data.split(":");
-  const profile = await profileForChat(chatId);
+  const profile = await profileForChat(ctx.bot, chatId);
 
   if (!profile) {
-    await answerCallbackQuery(query.id, "Hubungkan akun dulu: /start KODE");
-    return;
+    await ctx.api.answerCallbackQuery(query.id, "Hubungkan akun dulu: /start KODE");
+    return undefined;
   }
 
-  const session = await getSession(chatId);
+  if (!(await ensureEligible(ctx, chatId, profile))) {
+    await ctx.api.answerCallbackQuery(query.id);
+    return undefined;
+  }
+
+  const session = await getSession(ctx.bot, chatId);
 
   switch (action) {
     case "c": {
       const [categoryId] = rest;
       const categories = await listCategories();
-      const name = categories.find((category) => category.id === categoryId)?.name ?? "Tanpa kategori";
+      const name =
+        categories.find((category) => category.id === categoryId)?.name ?? "Tanpa kategori";
 
-      await setSession(chatId, profile.user_id, "new:title", {
+      await setSession(ctx.bot, chatId, profile.user_id, "new:title", {
         categoryId: categoryId === "none" ? null : categoryId,
       });
 
-      await answerCallbackQuery(query.id, name);
-      await sendMessage(chatId, `Kategori: *${md(name)}*\n\nTulis judul singkat masalahnya.`);
-      return;
+      await ctx.api.answerCallbackQuery(query.id, name);
+      await ctx.api.sendMessage(
+        chatId,
+        `Kategori: *${md(name)}*\n\nTulis judul singkat masalahnya.`,
+      );
+      return profile.user_id;
     }
 
     case "p": {
       const [priority] = rest as [TicketPriority];
 
       if (!session || session.state !== "new:priority") {
-        await answerCallbackQuery(query.id, "Sesi habis, mulai lagi dengan /new");
-        return;
+        await ctx.api.answerCallbackQuery(query.id, "Sesi habis, mulai lagi dengan /new");
+        return profile.user_id;
       }
 
-      await answerCallbackQuery(query.id, priorityLine(priority));
-      await createFromDraft(chatId, profile.user_id, profile.role, session, priority);
-      return;
+      await ctx.api.answerCallbackQuery(query.id, priorityLine(priority));
+      await createFromDraft(ctx, chatId, profile.user_id, session, priority);
+      return profile.user_id;
     }
 
     case "a": {
       const [ticketId] = rest;
       const claimed = await claimTicket(profile.user_id, ticketId);
-      await answerCallbackQuery(query.id, claimed ? "Ditugaskan ke kamu" : "Tidak diizinkan");
+      await ctx.api.answerCallbackQuery(query.id, claimed ? "Ditugaskan ke kamu" : "Tidak diizinkan");
 
       const ticket = claimed ? await findTicketById(profile.user_id, ticketId) : null;
       if (ticket) {
-        await sendTicketDetail(chatId, profile.user_id, profile.role, ticket);
+        await sendTicketDetail(ctx, chatId, profile.user_id, ticket);
       } else {
-        await sendMessage(chatId, "Hanya tim IT yang bisa mengambil tiket.");
+        await ctx.api.sendMessage(chatId, "Hanya tim IT yang bisa mengambil tiket.");
       }
-      return;
+      return profile.user_id;
     }
 
     case "t": {
       const [ticketId] = rest;
       const ticket = await findTicketById(profile.user_id, ticketId);
-      await answerCallbackQuery(query.id);
+      await ctx.api.answerCallbackQuery(query.id);
 
       if (!ticket) {
-        await sendMessage(chatId, "Tiket tidak ditemukan atau bukan milikmu.");
-        return;
+        await ctx.api.sendMessage(chatId, "Tiket tidak ditemukan atau bukan milikmu.");
+        return profile.user_id;
       }
 
-      await sendTicketDetail(chatId, profile.user_id, profile.role, ticket);
-      return;
+      await sendTicketDetail(ctx, chatId, profile.user_id, ticket);
+      return profile.user_id;
     }
 
     case "r": {
       const [ticketId] = rest;
       const ticket = await findTicketById(profile.user_id, ticketId);
-      await answerCallbackQuery(query.id);
+      await ctx.api.answerCallbackQuery(query.id);
 
       if (!ticket) {
-        await sendMessage(chatId, "Tiket tidak ditemukan atau bukan milikmu.");
-        return;
+        await ctx.api.sendMessage(chatId, "Tiket tidak ditemukan atau bukan milikmu.");
+        return profile.user_id;
       }
 
-      await setSession(chatId, profile.user_id, "reply", {
+      await setSession(ctx.bot, chatId, profile.user_id, "reply", {
         ticketId: ticket.id,
         ticketNumber: ticket.ticket_number,
       });
 
-      await sendMessage(
+      await ctx.api.sendMessage(
         chatId,
         `Tulis balasan untuk *#${md(ticket.ticket_number)}*. Pesan berikutnya langsung dikirim.`,
       );
-      return;
+      return profile.user_id;
     }
 
     case "s": {
       const [status, ticketId] = rest as [TicketStatus, string];
       const updated = await updateTicketStatus(profile.user_id, ticketId, status);
-      await answerCallbackQuery(query.id, updated ? "Status diperbarui" : "Tidak diizinkan");
+      await ctx.api.answerCallbackQuery(query.id, updated ? "Status diperbarui" : "Tidak diizinkan");
 
       if (!updated) {
-        await sendMessage(chatId, "Hanya tim IT yang bisa mengubah status.");
-        return;
+        await ctx.api.sendMessage(chatId, "Hanya tim IT yang bisa mengubah status.");
+        return profile.user_id;
       }
 
       const ticket = await findTicketById(profile.user_id, ticketId);
-      await sendMessage(chatId, `Status diubah ke *${md(statusLine(status))}*.`);
+      await ctx.api.sendMessage(chatId, `Status diubah ke *${md(statusLine(status))}*.`);
 
       if (ticket) {
-        await sendTicketDetail(chatId, profile.user_id, profile.role, ticket);
+        await sendTicketDetail(ctx, chatId, profile.user_id, ticket);
       }
-      return;
+      return profile.user_id;
     }
 
     default:
-      await answerCallbackQuery(query.id);
+      await ctx.api.answerCallbackQuery(query.id);
+      return profile.user_id;
   }
 }

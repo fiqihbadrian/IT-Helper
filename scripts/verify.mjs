@@ -511,19 +511,24 @@ async function main() {
   }
 
   // ---------------------------------------------------------------------------
-  console.log("\nTelegram linking");
+  console.log("\nTelegram linking (two bots)");
   const chatId = 990000000 + Math.floor(Math.random() * 9999);
-  const linkCode = await employee1.rpc("create_telegram_link_code");
-  const code = linkCode.body?.[0]?.code;
+  const staffChatId = chatId + 1;
+  const mintedCodes = [];
+
+  const empCodeRes = await employee1.rpc("create_telegram_link_code", { p_bot: "employee" });
+  const code = empCodeRes.body?.[0]?.code;
+  if (code) mintedCodes.push(code);
   check(
-    "user can request a Telegram link code",
+    "an employee can request an employee-bot link code",
     typeof code === "string" && code.length === 6,
-    JSON.stringify(linkCode.body)?.slice(0, 120),
+    JSON.stringify(empCodeRes.body)?.slice(0, 120),
   );
 
   if (code) {
     const redeemed = await employee1.rpc("redeem_telegram_code", {
       p_code: code.toLowerCase(),
+      p_bot: "employee",
       p_chat_id: chatId,
     });
     check(
@@ -534,11 +539,13 @@ async function main() {
 
     const replay = await employee1.rpc("redeem_telegram_code", {
       p_code: code,
+      p_bot: "employee",
       p_chat_id: chatId + 1,
     });
     check("a code cannot be redeemed twice", (replay.body ?? []).length === 0);
 
     const lookup = await employee1.rpc("profile_for_telegram_chat", {
+      p_bot: "employee",
       p_chat_id: chatId,
     });
     check(
@@ -547,19 +554,113 @@ async function main() {
       JSON.stringify(lookup.body)?.slice(0, 160),
     );
 
-    const bogus = await employee1.rpc("redeem_telegram_code", {
-      p_code: "ZZZZZZ",
-      p_chat_id: chatId + 2,
+    // The same human has the same private chat id on both bots, so a link has
+    // to be keyed by (bot, chat_id) — never by chat_id alone.
+    const wrongBot = await employee1.rpc("profile_for_telegram_chat", {
+      p_bot: "staff",
+      p_chat_id: chatId,
     });
-    check("an unknown code is rejected", (bogus.body ?? []).length === 0);
+    check(
+      "the same chat id does not resolve on the other bot",
+      (wrongBot.body ?? []).length === 0,
+      JSON.stringify(wrongBot.body)?.slice(0, 160),
+    );
 
-    const unlinked = await employee1.rpc("unlink_telegram", { p_chat_id: chatId });
+    const crossBot = await employee1.rpc("redeem_telegram_code", {
+      p_code: "ZZZZZZ",
+      p_bot: "staff",
+      p_chat_id: chatId,
+    });
+    check("an unknown code is rejected", (crossBot.body ?? []).length === 0);
+
+    const unlinked = await employee1.rpc("unlink_telegram", {
+      p_bot: "employee",
+      p_chat_id: chatId,
+    });
     check("unlinking clears the chat", unlinked.body === true);
 
     const afterUnlink = await employee1.rpc("profile_for_telegram_chat", {
+      p_bot: "employee",
       p_chat_id: chatId,
     });
     check("an unlinked chat resolves to nothing", (afterUnlink.body ?? []).length === 0);
+  }
+
+  // The staff bot is not a preference, it is a boundary: an employee must not be
+  // able to mint a staff-bot code at all. The bot's refusal to show the commands
+  // is presentation; this is the gate.
+  const empStaffCode = await employee1.rpc("create_telegram_link_code", { p_bot: "staff" });
+  check(
+    "an employee cannot mint a staff-bot link code",
+    empStaffCode.status >= 400 || (empStaffCode.body ?? []).length === 0,
+    `${empStaffCode.status} ${JSON.stringify(empStaffCode.body)?.slice(0, 120)}`,
+  );
+
+  const staffCodeRes = await support1.rpc("create_telegram_link_code", { p_bot: "staff" });
+  const staffCode = staffCodeRes.body?.[0]?.code;
+  if (staffCode) mintedCodes.push(staffCode);
+  check(
+    "IT support can request a staff-bot link code",
+    typeof staffCode === "string" && staffCode.length === 6,
+    JSON.stringify(staffCodeRes.body)?.slice(0, 120),
+  );
+
+  if (staffCode) {
+    // A code minted for one bot must be inert on the other.
+    const onEmployeeBot = await support1.rpc("redeem_telegram_code", {
+      p_code: staffCode,
+      p_bot: "employee",
+      p_chat_id: staffChatId,
+    });
+    check(
+      "a staff-bot code does not work on the employee bot",
+      (onEmployeeBot.body ?? []).length === 0,
+      JSON.stringify(onEmployeeBot.body)?.slice(0, 160),
+    );
+
+    const staffRedeem = await support1.rpc("redeem_telegram_code", {
+      p_code: staffCode,
+      p_bot: "staff",
+      p_chat_id: staffChatId,
+    });
+    check(
+      "IT support can link the staff bot",
+      staffRedeem.body?.[0]?.user_id === support1.userId,
+      JSON.stringify(staffRedeem.body)?.slice(0, 160),
+    );
+
+    const staffLookup = await support1.rpc("profile_for_telegram_chat", {
+      p_bot: "staff",
+      p_chat_id: staffChatId,
+    });
+    check(
+      "the staff chat resolves to the staff profile",
+      staffLookup.body?.[0]?.email === support1.email,
+      JSON.stringify(staffLookup.body)?.slice(0, 160),
+    );
+
+    await support1.rpc("unlink_telegram", { p_bot: "staff", p_chat_id: staffChatId });
+    const staffGone = await support1.rpc("profile_for_telegram_chat", {
+      p_bot: "staff",
+      p_chat_id: staffChatId,
+    });
+    check("unlinking the staff bot clears the chat", (staffGone.body ?? []).length === 0);
+  }
+
+  // Leave no link codes behind. `telegram_link_codes` has no delete policy on
+  // purpose — nothing in the app should ever remove one — so the cleanup goes
+  // through a direct connection instead of widening RLS for a test.
+  if (mintedCodes.length) {
+    const { default: pg } = await import("pg");
+    const sweep = new pg.Client({
+      connectionString: process.env.SUPABASE_DB_URL,
+      ssl: { rejectUnauthorized: false },
+    });
+    await sweep.connect();
+    await sweep.query("delete from public.telegram_link_codes where code = any($1::text[])", [
+      mintedCodes,
+    ]);
+    await sweep.end();
   }
 
   const anonKey = await anon.rpc("create_api_key", { p_name: "anonymous" });
@@ -569,7 +670,7 @@ async function main() {
     `status ${anonKey.status}`,
   );
 
-  const anonCode = await anon.rpc("create_telegram_link_code");
+  const anonCode = await anon.rpc("create_telegram_link_code", { p_bot: "employee" });
   check(
     "an unauthenticated caller cannot mint a Telegram link code",
     anonCode.status >= 400 || (anonCode.body ?? []).length === 0,
@@ -676,6 +777,78 @@ async function main() {
       "select=ticket_number&title=eq.Verify%20read-your-own-write",
     );
     check("the rolled-back ticket left nothing behind", (leaked.body ?? []).length === 0);
+
+    // -------------------------------------------------------------------------
+    // Which bot carries a notification is decided when the notification is
+    // created (`notifications.audience`), not guessed at delivery time. A staff
+    // member is both a requester and bench, so "who is this person" cannot answer
+    // it — only "what is this notification about" can.
+    console.log("\nNotification audience routing");
+    const router = new pg.Client({ connectionString: dbUrl, ssl: { rejectUnauthorized: false } });
+    await router.connect();
+    const empChat = 991100001;
+    const staffChat = 991100002;
+    const created = [];
+    try {
+      await router.query(
+        `insert into public.telegram_links (profile_id, bot, chat_id)
+         values ($1, 'employee', $2), ($3, 'staff', $4)
+         on conflict do nothing`,
+        [employee1.userId, empChat, support1.userId, staffChat],
+      );
+
+      const channelsFor = async (userId, audience) => {
+        const { rows } = await router.query(
+          `insert into public.notifications (user_id, title, message, audience)
+           values ($1, 'Verify audience routing', 'scripts/verify.mjs', $2)
+           returning id`,
+          [userId, audience],
+        );
+        created.push(rows[0].id);
+        const { rows: queued } = await router.query(
+          `select channel, status from public.notification_deliveries
+            where notification_id = $1 order by channel`,
+          [rows[0].id],
+        );
+        return queued.map((row) => `${row.channel}/${row.status}`).join(" ");
+      };
+
+      const empOwn = await channelsFor(employee1.userId, "requester");
+      check(
+        "an employee's own notification goes to the employee bot",
+        empOwn === "telegram/PENDING web/SENT",
+        empOwn,
+      );
+
+      const empBench = await channelsFor(employee1.userId, "staff");
+      check(
+        "a bench notification does not use an employee's employee-bot link",
+        empBench === "web/SENT",
+        empBench,
+      );
+
+      const staffBench = await channelsFor(support1.userId, "staff");
+      check(
+        "a bench notification goes to the staff bot",
+        staffBench === "telegram_staff/PENDING web/SENT",
+        staffBench,
+      );
+
+      const staffOwn = await channelsFor(support1.userId, "requester");
+      check(
+        "a requester notification does not use a staff member's staff-bot link",
+        staffOwn === "web/SENT",
+        staffOwn,
+      );
+    } finally {
+      if (created.length) {
+        await router.query("delete from public.notifications where id = any($1::uuid[])", [created]);
+      }
+      await router.query("delete from public.telegram_links where chat_id = any($1::bigint[])", [
+        [empChat, staffChat],
+      ]);
+      await router.end();
+    }
   }
 
   // ---------------------------------------------------------------------------

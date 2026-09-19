@@ -94,11 +94,18 @@ export default async function AdminSettingsPage() {
             <Row label="Web (in-app)">
               <span className="text-success-ink">Enabled</span>
             </Row>
-            <Row label="Telegram bot">
-              {telegramConfigured() ? (
+            <Row label="Telegram — bot karyawan">
+              {telegramConfigured("employee") ? (
                 <span className="text-success-ink">Enabled</span>
               ) : (
-                <span className="text-ink-muted">Set TELEGRAM_BOT_TOKEN to enable</span>
+                <span className="text-ink-muted">Set BOT_TELE_KARYAWAN to enable</span>
+              )}
+            </Row>
+            <Row label="Telegram — bot tim IT">
+              {telegramConfigured("staff") ? (
+                <span className="text-success-ink">Enabled</span>
+              ) : (
+                <span className="text-ink-muted">Set BOT_TELE_ADMIN to enable</span>
               )}
             </Row>
             <Row label="Email">

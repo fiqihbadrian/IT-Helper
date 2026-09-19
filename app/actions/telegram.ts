@@ -4,17 +4,25 @@ import { revalidatePath } from "next/cache";
 
 import { requireProfile } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
+import { isBotKind, isStaffRole, type BotKind } from "@/lib/telegram/bots";
 import { createApiKey, createTelegramLinkCode, revokeApiKey } from "@/services/telegram";
 import type { ActionResult } from "@/types";
 
-export async function generateTelegramLinkCode(): Promise<
-  ActionResult<{ code: string; expiresAt: string }>
-> {
+export async function generateTelegramLinkCode(
+  bot: BotKind,
+): Promise<ActionResult<{ code: string; expiresAt: string }>> {
   const profile = await requireProfile();
   if (!profile.is_active) return { ok: false, error: "Akun kamu tidak aktif." };
 
+  // The database refuses this too (`create_telegram_link_code` raises 42501);
+  // checking here just means the user gets a sentence instead of a Postgres error.
+  if (!isBotKind(bot)) return { ok: false, error: "Bot tidak dikenal." };
+  if (bot === "staff" && !isStaffRole(profile.role)) {
+    return { ok: false, error: "Bot tim IT hanya untuk akun IT support dan admin." };
+  }
+
   const supabase = await createClient();
-  const result = await createTelegramLinkCode(supabase);
+  const result = await createTelegramLinkCode(supabase, bot);
 
   if (!result) return { ok: false, error: "Gagal membuat kode. Coba lagi." };
 

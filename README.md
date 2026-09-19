@@ -81,7 +81,8 @@ services/           every database query lives here, not in components
 types/              domain types + generated-style database types
 supabase/
   migrations/       0001 schema, 0002 triggers, 0003 RLS, 0004 storage, 0005 stats,
-                    0006 API keys, 0007 Telegram, 0008 profile visibility
+                    0006 API keys, 0007 Telegram, 0008 profile visibility,
+                    0009 two Telegram bots
   seed.sql          demo departments, categories, users, tickets
 ```
 
@@ -142,47 +143,65 @@ records:
 - `resolved_at` / `closed_at` are maintained by a trigger.
 - `notifications` insert queues a `notification_deliveries` row per channel.
 
-## Telegram bot (Phase 2)
+## Telegram bots (Phase 2)
 
-The bot is a second way to **open and follow tickets**, not a separate system: it
-writes to the same tables and is subject to the same RLS policies.
+The bots are a second way to **open and follow tickets**, not a separate system:
+they write to the same tables and are subject to the same RLS policies.
+
+There are two of them, and the split is the point. Employees talk to
+**@bian_it_bot**; IT staff talk to **@bian_itbot**. A ticket update for a
+requester and a ticket update for the bench are different notifications, so
+sending both to one bot would put the bench queue in an employee's chat.
 
 ```bash
 # .env.local
-TELEGRAM_BOT_TOKEN=123456:ABC...   # or BOT_TELE=...
-TELEGRAM_WEBHOOK_SECRET=<random>
+BOT_TELE_KARYAWAN=123456:ABC...    # employee bot, @bian_it_bot
+BOT_TELE_ADMIN=789012:DEF...       # staff bot, @bian_itbot
+TELEGRAM_WEBHOOK_SECRET=<random>   # shared by both
 DISPATCH_SECRET=<random>
 NEXT_PUBLIC_TELEGRAM_BOT_USERNAME=bian_it_bot
+NEXT_PUBLIC_TELEGRAM_STAFF_BOT_USERNAME=bian_itbot
 ```
 
+`TELEGRAM_EMPLOYEE_BOT_TOKEN` / `TELEGRAM_STAFF_BOT_TOKEN` are accepted as the
+longer, more explicit names; the `TELEGRAM_*` pair wins when both are set.
+
 ```bash
-npm run telegram:setup https://your-app.example.com   # register webhook
-npm run telegram:info                                 # check status
-npm run telegram:poll                                 # local dev, no tunnel
+npm run telegram:setup        # register the employee webhook
+npm run telegram:setup:staff  # register the staff webhook
+npm run telegram:info         # what Telegram holds for the employee bot
+npm run telegram:poll         # local dev, no tunnel (employee bot)
+npm run telegram:poll:staff   # local dev, no tunnel (staff bot)
 ```
 
-Users link from **Profile → Telegram** (a 15-minute single-use code, sent to the
-bot as `/start CODE`), then `/new` walks them through category → title →
-description → priority. Screenshots are re-uploaded into the same private
-Supabase bucket, and every ticket change is pushed back as a notification.
+The webhook URL *is* the bot identity: `/api/telegram/webhook` is the employee
+bot and `/api/telegram/webhook/staff` is the staff bot. Nothing in the update
+payload says which bot it arrived for, and nothing needs to.
 
-The ☰ menu is role-aware. Telegram has no notion of a role, so the split is
-expressed with command *scopes*: one `default` list of 7 commands that everyone
-inherits, plus a per-chat override of 13 installed against the `chat_id` of each
-IT staff member. That is how `/queue`, `/open`, `/unassigned`, `/find`,
-`/claim` and `/close` exist without an extra screen. `lib/telegram/menu.ts` owns
-the lists and the bot installs them itself, so there is no second copy to drift:
+Users link from **Profile → Telegram** — one card per bot, a 15-minute
+single-use code sent to the bot as `/start CODE` — then `/new` walks them through
+category → title → description → priority. Screenshots are re-uploaded into the
+same private Supabase bucket, and every ticket change is pushed back as a
+notification.
+
+The ☰ menu is per bot: 7 commands for employees, 13 for the staff bot, which adds
+`/queue`, `/open`, `/unassigned`, `/find`, `/claim` and `/close`. There are no
+per-chat overrides and no role branching inside a bot, so there is nothing to
+drift. `lib/telegram/menu.ts` owns the lists and each bot installs its own:
 
 ```bash
-node scripts/telegram-setup.mjs --menus 8620947265   # what Telegram holds
+node scripts/telegram-setup.mjs --menus --bot staff   # what Telegram holds
 ```
 
 A menu is presentation, not a permission system. Staff-only commands are checked
-again in `commands.ts`, and RLS has the final word — an employee typing `/queue`
-is refused before a query is ever sent. Replies can be sent as a command
-(`/reply IT-000004 pesan`) so a plain message is never mistaken for a reply.
+again in `commands.ts`, and RLS has the final word. The real gate is linking: an
+employee cannot even mint a staff-bot code — `create_telegram_link_code` raises
+`only IT staff can link the staff bot`. A demoted staff member who still holds a
+staff-bot link is unlinked on their next command. Replies can be sent as a
+command (`/reply IT-000004 pesan`) so a plain message is never mistaken for a
+reply.
 
-Why the bot cannot over-reach: every ticket query runs through `asUser(userId)`
+Why the bots cannot over-reach: every ticket query runs through `asUser(userId)`
 in `lib/db/pool.ts`, which opens a transaction with
 `set local role authenticated` and a `request.jwt.claims` payload for the linked
 profile. `auth.uid()` resolves to that user, so the policies in `0003_rls.sql`

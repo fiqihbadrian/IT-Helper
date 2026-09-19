@@ -3,6 +3,8 @@
  * browser; the service-role key is read exclusively on the server.
  */
 
+import { BOT_TOKEN_VARS, BOT_USERNAME_VARS, type BotKind } from "@/lib/telegram/bots";
+
 function required(name: string, value: string | undefined): string {
   if (!value) {
     throw new Error(
@@ -31,17 +33,20 @@ export function getServiceRoleKey(): string {
 }
 
 /**
- * Telegram credentials.
- *
- * `BOT_TELE` is accepted as an alias because that is what the token is called
- * in some dashboards; TELEGRAM_BOT_TOKEN wins when both are set.
+ * Telegram credentials. One token per bot — see `lib/telegram/bots.ts` for which
+ * environment variables name them and in what order they win.
  */
+function firstSet(names: string[]): string | undefined {
+  for (const name of names) {
+    const value = process.env[name];
+    if (value) return value;
+  }
+  return undefined;
+}
+
 export const telegramEnv = {
-  botToken: () =>
-    required(
-      "TELEGRAM_BOT_TOKEN (or BOT_TELE)",
-      process.env.TELEGRAM_BOT_TOKEN ?? process.env.BOT_TELE,
-    ),
+  botToken: (bot: BotKind) =>
+    required(BOT_TOKEN_VARS[bot].join(" (or "), firstSet(BOT_TOKEN_VARS[bot])),
   webhookSecret: () =>
     required(
       "TELEGRAM_WEBHOOK_SECRET",
@@ -52,13 +57,11 @@ export const telegramEnv = {
       "DISPATCH_SECRET",
       process.env.DISPATCH_SECRET ?? process.env.TELEGRAM_DISPATCH_SECRET,
     ),
-  botUsername: () =>
-    process.env.NEXT_PUBLIC_TELEGRAM_BOT_USERNAME ??
-    process.env.TELEGRAM_BOT_USERNAME ??
-    null,
+  /** `@name` without the leading @, for the t.me deep link on the profile page. */
+  botUsername: (bot: BotKind) => firstSet(BOT_USERNAME_VARS[bot]) ?? null,
 };
 
-/** True when the bot is configured; used to hide Telegram UI that cannot work. */
-export function telegramConfigured() {
-  return Boolean(process.env.TELEGRAM_BOT_TOKEN ?? process.env.BOT_TELE);
+/** True when a bot has a token; used to hide Telegram UI that cannot work. */
+export function telegramConfigured(bot: BotKind) {
+  return Boolean(firstSet(BOT_TOKEN_VARS[bot]));
 }

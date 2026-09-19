@@ -11,7 +11,7 @@ interface PersonRow {
   role: string;
   department: string | null;
   is_active: boolean;
-  telegram_linked: boolean;
+  telegram: { employee: boolean; staff: boolean };
 }
 
 /**
@@ -59,7 +59,12 @@ export const GET = apiRoute(async ({ db }, request) => {
          p.role::text as role,
          (select d.name from public.departments d where d.id = p.department_id) as department,
          p.is_active,
-         (p.telegram_user_id is not null) as telegram_linked
+         jsonb_build_object(
+           'employee', exists (select 1 from public.telegram_links l
+                                where l.profile_id = p.id and l.bot = 'employee'),
+           'staff', exists (select 1 from public.telegram_links l
+                             where l.profile_id = p.id and l.bot = 'staff')
+         ) as telegram
        from public.profiles p
        ${clause}
      )

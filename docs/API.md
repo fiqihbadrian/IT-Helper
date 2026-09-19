@@ -84,7 +84,7 @@ dilakukan integrasi apa pun, supaya bisa gagal cepat kalau key-nya salah peran.
     "full_name": "Budi Santoso",
     "role": "employee",
     "department": "Finance",
-    "telegram_linked": false,
+    "telegram": { "employee": false, "staff": false },
     "api_key": { "id": "…", "name": "Bot laporan" },
     "permissions": {
       "create_ticket": true,
@@ -103,7 +103,6 @@ Kategori aktif, departemen, dan angka statistik — semuanya dalam satu request,
 supaya form di sisi klien tidak perlu tiga kali bolak-balik.
 
 ### `GET /api/v1/users`
-
 Direktori, dibatasi RLS: karyawan melihat dirinya sendiri dan orang-orang yang
 terlibat di tiketnya (nama agen yang membalas harus terbaca), staf melihat
 semuanya.
@@ -243,6 +242,14 @@ Pola yang dipakai: satu key per integrasi, dengan nama yang jelas.
 
 Key karyawan sudah cukup untuk membuka dan membalas tiket sendiri, jadi bot
 pribadi tidak perlu diberi hak staf.
+
+## Perubahan yang memutus kompatibilitas
+
+**`telegram_linked` → `telegram: { employee, staff }`.** Sistem punya dua bot
+Telegram sejak `0009_two_bots.sql` — satu untuk karyawan, satu untuk tim IT — dan
+satu boolean tidak bisa menyatakan "tertaut ke yang mana". Bidang lamanya dihapus,
+bukan dipertahankan sebagai alias, supaya integrasi yang belum menyesuaikan gagal
+cepat dan jelas alih-alih diam-diam salah baca.
 
 ## Membatalkan
 

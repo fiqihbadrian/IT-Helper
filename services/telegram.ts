@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
+import type { BotKind } from "@/lib/telegram/bots";
 import type { Database } from "@/types/database";
 
 type Db = SupabaseClient<Database>;
@@ -19,9 +20,13 @@ export interface ApiKeyRow {
   created_at: string;
 }
 
-/** Minted server-side by `create_telegram_link_code()`; the plaintext is shown once. */
-export async function createTelegramLinkCode(supabase: Db) {
-  const { data, error } = await supabase.rpc("create_telegram_link_code");
+/**
+ * Minted server-side by `create_telegram_link_code()`; the plaintext is shown
+ * once. The bot is part of the code, so a code minted for the employee bot
+ * cannot be redeemed against the staff bot.
+ */
+export async function createTelegramLinkCode(supabase: Db, bot: BotKind) {
+  const { data, error } = await supabase.rpc("create_telegram_link_code", { p_bot: bot });
   if (error) throw new Error(error.message);
   return (data as TelegramLinkCode[] | null)?.[0] ?? null;
 }

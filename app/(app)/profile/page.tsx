@@ -8,6 +8,8 @@ import { Card, CardHeader, PageHeader } from "@/components/ui/Card";
 import { requireProfile } from "@/lib/auth";
 import { telegramConfigured, telegramEnv } from "@/lib/env";
 import { createClient } from "@/lib/supabase/server";
+import { BOT_KINDS, isStaffRole, type BotKind } from "@/lib/telegram/bots";
+import { commandsFor } from "@/lib/telegram/menu";
 import { formatDateTime } from "@/lib/utils";
 import { listApiKeys } from "@/services/telegram";
 
@@ -17,7 +19,7 @@ export default async function ProfilePage() {
   const profile = await requireProfile();
   const supabase = await createClient();
 
-  const [{ data: department }, apiKeys] = await Promise.all([
+  const [{ data: department }, apiKeys, { data: links }] = await Promise.all([
     profile.department_id
       ? supabase
           .from("departments")
@@ -26,7 +28,11 @@ export default async function ProfilePage() {
           .maybeSingle()
       : Promise.resolve({ data: null }),
     listApiKeys(supabase, profile.id),
+    supabase.from("telegram_links").select("bot, chat_id").eq("profile_id", profile.id),
   ]);
+
+  const linkFor = (bot: BotKind) =>
+    (links ?? []).find((row) => row.bot === bot) ?? null;
 
   return (
     <div className="mx-auto max-w-2xl">
@@ -58,13 +64,24 @@ export default async function ProfilePage() {
         </div>
       </Card>
 
-      <div className="mt-5">
-        <TelegramPanel
-          botUsername={telegramEnv.botUsername()}
-          linked={profile.telegram_user_id !== null}
-          linkedChatId={profile.telegram_user_id}
-          configured={telegramConfigured()}
-        />
+      {/* One card per bot: linking the bench bot is a different act from linking
+          the one you report your own problems to, and either can stand alone. */}
+      <div className="mt-5 space-y-5">
+        {BOT_KINDS.map((bot) => {
+          const link = linkFor(bot);
+          return (
+            <TelegramPanel
+              key={bot}
+              bot={bot}
+              botUsername={telegramEnv.botUsername(bot)}
+              commands={commandsFor(bot)}
+              linked={link !== null}
+              linkedChatId={link?.chat_id ?? null}
+              configured={telegramConfigured(bot)}
+              allowed={bot === "employee" || isStaffRole(profile.role)}
+            />
+          );
+        })}
       </div>
 
       <div className="mt-5">

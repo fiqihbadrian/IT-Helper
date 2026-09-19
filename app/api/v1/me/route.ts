@@ -20,7 +20,8 @@ export const GET = apiRoute(async ({ db, identity }) => {
     role: string;
     is_active: boolean;
     department: string | null;
-    telegram_linked: boolean;
+    telegram_employee: boolean;
+    telegram_staff: boolean;
     created_at: string;
   }>(
     `select
@@ -29,7 +30,10 @@ export const GET = apiRoute(async ({ db, identity }) => {
        p.role::text as role,
        p.is_active,
        (select d.name from public.departments d where d.id = p.department_id) as department,
-       (p.telegram_user_id is not null) as telegram_linked,
+       exists (select 1 from public.telegram_links l
+                where l.profile_id = p.id and l.bot = 'employee') as telegram_employee,
+       exists (select 1 from public.telegram_links l
+                where l.profile_id = p.id and l.bot = 'staff') as telegram_staff,
        p.created_at
      from public.profiles p
      where p.id = auth.uid()`,
@@ -45,7 +49,10 @@ export const GET = apiRoute(async ({ db, identity }) => {
     role: profile.role,
     department: profile.department,
     is_active: profile.is_active,
-    telegram_linked: profile.telegram_linked,
+    telegram: {
+      employee: profile.telegram_employee,
+      staff: profile.telegram_staff,
+    },
     member_since: profile.created_at,
     api_key: { id: identity.keyId, name: identity.keyName },
     permissions: {

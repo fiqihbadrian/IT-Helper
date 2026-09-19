@@ -1,10 +1,16 @@
 import "server-only";
 
 import { telegramEnv } from "@/lib/env";
+import type { BotKind } from "@/lib/telegram/bots";
 
 /**
  * Minimal Telegram Bot API client. Only the handful of methods this project
  * actually calls — no SDK, so there is nothing to keep in sync.
+ *
+ * Every method takes the bot it is talking to. There is deliberately no
+ * "current bot": on Cloudflare Workers one isolate serves concurrent requests
+ * for both bots, so a module-level token would leak whichever bot was resolved
+ * last into an unrelated conversation.
  */
 
 const API = "https://api.telegram.org";
@@ -69,8 +75,28 @@ export interface InlineKeyboardButton {
   url?: string;
 }
 
-async function call<T>(method: string, payload: Record<string, unknown>): Promise<T | null> {
-  const response = await fetch(`${API}/bot${telegramEnv.botToken()}/${method}`, {
+/** Telegram caps descriptions at 256 characters and lists at 100 entries. */
+export interface BotCommand {
+  command: string;
+  description: string;
+}
+
+/**
+ * Telegram has no concept of our roles, so a bot's menu is expressed as a scope:
+ * `default` is what everyone who talks to that bot sees, and `chat` overrides it
+ * for one conversation.
+ */
+export type BotCommandScope =
+  | { type: "default" }
+  | { type: "all_private_chats" }
+  | { type: "chat"; chat_id: number | string };
+
+async function call<T>(
+  bot: BotKind,
+  method: string,
+  payload: Record<string, unknown>,
+): Promise<T | null> {
+  const response = await fetch(`${API}/bot${telegramEnv.botToken(bot)}/${method}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -85,7 +111,7 @@ async function call<T>(method: string, payload: Record<string, unknown>): Promis
 
   if (!body.ok) {
     // 403 means the user blocked the bot — not an error worth throwing on.
-    console.error(`[telegram] ${method} failed: ${body.description}`);
+    console.error(`[telegram:${bot}] ${method} failed: ${body.description}`);
     return null;
   }
 
@@ -98,90 +124,39 @@ export interface SendOptions {
   disablePreview?: boolean;
 }
 
-export function sendMessage(chatId: number | string, text: string, options: SendOptions = {}) {
-  return call<TelegramMessage>("sendMessage", {
-    chat_id: chatId,
-    text,
-    parse_mode: options.markdown === false ? undefined : "Markdown",
-    link_preview_options: { is_disabled: options.disablePreview ?? true },
-    reply_markup: options.keyboard ? { inline_keyboard: options.keyboard } : undefined,
-  });
+/** The methods the app calls, bound to one bot. */
+export interface TelegramApi {
+  sendMessage(
+    chatId: number | string,
+    text: string,
+    options?: SendOptions,
+  ): Promise<TelegramMessage | null>;
+  answerCallbackQuery(id: string, text?: string): Promise<boolean | null>;
+  setMyCommands(commands: BotCommand[], scope?: BotCommandScope): Promise<boolean | null>;
 }
 
-export function editMessageText(
-  chatId: number | string,
-  messageId: number,
-  text: string,
-  options: SendOptions = {},
-) {
-  return call<TelegramMessage>("editMessageText", {
-    chat_id: chatId,
-    message_id: messageId,
-    text,
-    parse_mode: options.markdown === false ? undefined : "Markdown",
-    link_preview_options: { is_disabled: true },
-    reply_markup: options.keyboard ? { inline_keyboard: options.keyboard } : undefined,
-  });
-}
+export function telegramApi(bot: BotKind): TelegramApi {
+  return {
+    sendMessage(chatId, text, options = {}) {
+      return call<TelegramMessage>(bot, "sendMessage", {
+        chat_id: chatId,
+        text,
+        parse_mode: options.markdown === false ? undefined : "Markdown",
+        link_preview_options: { is_disabled: options.disablePreview ?? true },
+        reply_markup: options.keyboard ? { inline_keyboard: options.keyboard } : undefined,
+      });
+    },
 
-export function answerCallbackQuery(id: string, text?: string) {
-  return call<boolean>("answerCallbackQuery", {
-    callback_query_id: id,
-    text,
-    show_alert: false,
-  });
-}
+    answerCallbackQuery(id, text) {
+      return call<boolean>(bot, "answerCallbackQuery", {
+        callback_query_id: id,
+        text,
+        show_alert: false,
+      });
+    },
 
-export function setWebhook(url: string, secretToken: string) {
-  return call<boolean>("setWebhook", {
-    url,
-    secret_token: secretToken,
-    allowed_updates: ["message", "callback_query"],
-    drop_pending_updates: true,
-  });
-}
-
-export function deleteWebhook() {
-  return call<boolean>("deleteWebhook", { drop_pending_updates: true });
-}
-
-export function getMe() {
-  return call<TelegramUser>("getMe", {});
-}
-
-export function getWebhookInfo() {
-  return call<Record<string, unknown>>("getWebhookInfo", {});
-}
-
-/* -------------------------------------------------------------------------- */
-/* Command menu                                                                */
-/* -------------------------------------------------------------------------- */
-
-/** Telegram caps descriptions at 256 characters and lists at 100 entries. */
-export interface BotCommand {
-  command: string;
-  description: string;
-}
-
-/**
- * Telegram has no concept of our roles, so a role-specific menu is expressed as
- * a scope: `default` is what everyone sees, and `chat` overrides it for one
- * conversation. Staff get the longer list installed against their own chat_id.
- */
-export type BotCommandScope =
-  | { type: "default" }
-  | { type: "all_private_chats" }
-  | { type: "chat"; chat_id: number | string };
-
-export function setMyCommands(commands: BotCommand[], scope?: BotCommandScope) {
-  return call<boolean>("setMyCommands", { commands, scope });
-}
-
-/** Drops a scope's override; the `default` list takes over again. */
-export function deleteMyCommands(scope?: BotCommandScope) {
-  return call<boolean>("deleteMyCommands", { scope });
-}
-
-export function getMyCommands(scope?: BotCommandScope) {
-  return call<BotCommand[]>("getMyCommands", { scope });
+    setMyCommands(commands, scope) {
+      return call<boolean>(bot, "setMyCommands", { commands, scope });
+    },
+  };
 }

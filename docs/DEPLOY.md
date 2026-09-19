@@ -120,14 +120,16 @@ NEXT_PUBLIC_SUPABASE_URL
 NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
 NEXT_PUBLIC_TICKET_BUCKET
 NEXT_PUBLIC_TELEGRAM_BOT_USERNAME
+NEXT_PUBLIC_TELEGRAM_STAFF_BOT_USERNAME
 ```
 
 **Secrets** (dashboard Cloudflare, tidak pernah masuk repo):
 
 ```text
 SUPABASE_SERVICE_ROLE_KEY
-TELEGRAM_BOT_TOKEN
-TELEGRAM_WEBHOOK_SECRET
+BOT_TELE_KARYAWAN        # bot karyawan, @bian_it_bot
+BOT_TELE_ADMIN           # bot tim IT, @bian_itbot
+TELEGRAM_WEBHOOK_SECRET  # satu secret untuk kedua bot
 DISPATCH_SECRET
 ```
 
@@ -140,7 +142,8 @@ const env=Object.fromEntries(fs.readFileSync(".env.local","utf8").split("\n")
   .map(l=>/^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$/.exec(l)).filter(Boolean).map(m=>[m[1],m[2]]));
 fs.writeFileSync("/tmp/it-secrets.json", JSON.stringify({
   SUPABASE_SERVICE_ROLE_KEY: env.SUPABASE_SERVICE_ROLE_KEY,
-  TELEGRAM_BOT_TOKEN: env.TELEGRAM_BOT_TOKEN ?? env.BOT_TELE,
+  BOT_TELE_KARYAWAN: env.BOT_TELE_KARYAWAN ?? env.TELEGRAM_EMPLOYEE_BOT_TOKEN,
+  BOT_TELE_ADMIN: env.BOT_TELE_ADMIN ?? env.TELEGRAM_STAFF_BOT_TOKEN,
   TELEGRAM_WEBHOOK_SECRET: env.TELEGRAM_WEBHOOK_SECRET,
   DISPATCH_SECRET: env.DISPATCH_SECRET,
 }));
@@ -148,6 +151,9 @@ fs.writeFileSync("/tmp/it-secrets.json", JSON.stringify({
 npx wrangler secret bulk /tmp/it-secrets.json && rm -f /tmp/it-secrets.json
 npx wrangler secret list
 ```
+
+Satu `TELEGRAM_WEBHOOK_SECRET` untuk kedua bot: yang membedakan keduanya adalah
+URL webhook, bukan secret.
 
 `NEXT_PUBLIC_*` ditaruh di `wrangler.jsonc` dengan sengaja: nilainya memang ikut
 ke browser, dan OpenNext membacanya dari `process.env` saat **runtime**, bukan
@@ -159,24 +165,33 @@ menghapus variabel yang diisi dari dashboard.
 ## Bot Telegram setelah deploy
 
 Webhook Telegram itu **per bot token, satu URL**. Cloudflare tidak tahu-menahu soal
-Telegram, jadi setelah deploy URL-nya harus didaftarkan sekali:
+Telegram, jadi setelah deploy kedua URL-nya harus didaftarkan sekali:
 
 ```bash
-TELEGRAM_WEBHOOK_SECRET=<sama seperti di Worker> npm run telegram:setup https://it-helpdesk.fiqihbadrian.workers.dev
+npm run telegram:setup        https://it-helpdesk.fiqihbadrian.workers.dev
+npm run telegram:setup:staff  https://it-helpdesk.fiqihbadrian.workers.dev
+
 npm run telegram:info
+npm run telegram:info:staff
 ```
 
 Sekali daftar, selesai. Worker tidak pernah tidur, jadi bot hidup 24/7 — beda
 dengan lokal yang butuh `npm run dev` **dan** `npm run telegram:poll` jalan
 bersamaan.
 
-Dua hal yang mudah salah:
+Tiga hal yang mudah salah:
 
 1. **Jangan** jalankan `npm run telegram:poll` di produksi. Script itu memanggil
    `deleteWebhook` lebih dulu, jadi webhook produksi ikut terhapus dan bot mati.
+   Script-nya sekarang menolak jalan kalau `NEXT_PUBLIC_APP_URL` bukan localhost.
 2. Kalau `TELEGRAM_WEBHOOK_SECRET` tidak di-set saat setup, script akan membuat
    secret acak. Worker menolak semuanya dengan **401** karena secret-nya beda.
    Set dulu secret-nya di Worker, baru daftarkan webhook.
+3. `pending_update_count` yang tidak mau turun dengan
+   `last_error_message: 500 Internal Server Error` hampir selalu berarti **Worker
+   yang tayang lebih tua dari skema database** — kode lama menanyakan kolom yang
+   sudah dihapus migrasi baru. Deploy ulang; update tertunda diproses sendiri.
+   `last_error_date` tetap terisi setelah pulih, itu metadata terakhir.
 
 ## Auto-deploy dari GitHub
 

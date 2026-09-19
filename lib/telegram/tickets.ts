@@ -1,6 +1,7 @@
 import "server-only";
 
 import { asSystem, asUser, type Queryable } from "@/lib/db/pool";
+import { BOT_CHANNEL, type BotKind } from "@/lib/telegram/bots";
 import type { TicketPriority, TicketStatus } from "@/types";
 
 /**
@@ -288,38 +289,45 @@ export interface PendingNotification {
   ticket_number: string | null;
 }
 
-/** Queued by the `notifications_queue_delivery` trigger in 0007. */
-export async function pendingNotifications(chatId: number, limit = 10) {
+/**
+ * Queued by the `notifications_queue_delivery` trigger in 0009, which picks the
+ * channel from the notification's audience. The `l.bot` join is what makes a
+ * staff notification wait for the staff bot even when the same person also has
+ * the employee bot linked — the two links share a chat id, so the bot has to be
+ * part of the join or both would drain each other's queue.
+ */
+export async function pendingNotifications(bot: BotKind, chatId: number, limit = 10) {
   return asSystem(async (db) => {
     const { rows } = await db.query<PendingNotification>(
       `select n.id, n.title, n.message, n.ticket_id, t.ticket_number
          from public.notification_deliveries d
          join public.notifications n on n.id = d.notification_id
          join public.profiles p on p.id = n.user_id
+         join public.telegram_links l on l.profile_id = n.user_id and l.bot = $3
          left join public.tickets t on t.id = n.ticket_id
-        where d.channel = 'telegram'
+        where d.channel = $1
           and d.status = 'PENDING'
-          and p.telegram_user_id = $1
+          and l.chat_id = $2
           and p.is_active = true
         order by n.created_at asc
-        limit $2`,
-      [chatId, limit],
+        limit $4`,
+      [BOT_CHANNEL[bot], chatId, bot, limit],
     );
     return rows;
   });
 }
 
-export async function markDeliveries(ids: string[], error?: string) {
+export async function markDeliveries(bot: BotKind, ids: string[], error?: string) {
   if (!ids.length) return;
   return asSystem(async (db) => {
     await db.query(
       `update public.notification_deliveries
-          set status = $2,
+          set status = $3,
               attempts = attempts + 1,
-              last_error = $3,
-              sent_at = case when $2 = 'SENT' then now() else null end
-        where notification_id = any($1::uuid[]) and channel = 'telegram'`,
-      [ids, error ? "FAILED" : "SENT", error ?? null],
+              last_error = $4,
+              sent_at = case when $3 = 'SENT' then now() else null end
+        where notification_id = any($1::uuid[]) and channel = $2`,
+      [ids, BOT_CHANNEL[bot], error ? "FAILED" : "SENT", error ?? null],
     );
   });
 }

@@ -32,7 +32,6 @@ export interface Profile {
   email: string;
   role: UserRole;
   department_id: string | null;
-  telegram_user_id: number | null;
   avatar_url: string | null;
   is_active: boolean;
   created_at: string;

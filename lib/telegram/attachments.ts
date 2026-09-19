@@ -2,6 +2,7 @@ import "server-only";
 
 import { asUser } from "@/lib/db/pool";
 import { mimeFromPath, downloadTelegramFile, uploadToTicket } from "@/lib/telegram/files";
+import type { BotKind } from "@/lib/telegram/bots";
 
 export interface TelegramPhoto {
   file_id: string;
@@ -16,13 +17,14 @@ export interface TelegramPhoto {
  * special privileges here.
  */
 export async function attachPhoto(
+  bot: BotKind,
   userId: string,
   ticketId: string,
   photo: TelegramPhoto,
   caption?: string,
 ): Promise<{ ok: true; name: string } | { ok: false; reason: string }> {
   try {
-    const file = await downloadTelegramFile(photo.file_id);
+    const file = await downloadTelegramFile(bot, photo.file_id);
     if (!file) {
       return { ok: false, reason: "Foto tidak bisa diambil dari Telegram (mungkin terlalu besar)." };
     }

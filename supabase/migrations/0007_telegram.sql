@@ -91,6 +91,10 @@ create trigger notification_deliveries_set_updated_at
 -- -----------------------------------------------------------------------------
 -- Queue a delivery row for every new notification. This is the hook the
 -- dispatcher polls; adding an email channel later is a one-line change here.
+--
+-- 0009 replaces this function with the real one, which routes to one of the two
+-- bots based on `notifications.audience`. It is web-only here because the bot
+-- routing needs `telegram_links`, which 0009 creates.
 -- -----------------------------------------------------------------------------
 create or replace function public.notifications_queue_delivery()
 returns trigger
@@ -102,15 +106,6 @@ begin
   insert into public.notification_deliveries (notification_id, channel, status)
   values (new.id, 'web', 'SENT');
 
-  -- only queue Telegram for users who actually linked an account
-  if exists (
-    select 1 from public.profiles
-    where id = new.user_id and telegram_user_id is not null and is_active = true
-  ) then
-    insert into public.notification_deliveries (notification_id, channel, status)
-    values (new.id, 'telegram', 'PENDING');
-  end if;
-
   return new;
 end;
 $$;
@@ -121,107 +116,16 @@ create trigger notifications_queue_delivery
   for each row execute function public.notifications_queue_delivery();
 
 -- -----------------------------------------------------------------------------
--- Redeem a link code. SECURITY DEFINER: the bot is not authenticated as the
--- user, it only knows the chat id and the code the user pasted.
+-- The link-code RPCs (`redeem_telegram_code`, `unlink_telegram`,
+-- `profile_for_telegram_chat`, `create_telegram_link_code`) are created in
+-- 0009, not here.
+--
+-- They used to live in this file and store the link on `profiles.telegram_user_id`.
+-- That column cannot exist any more — 0009 replaces it with `telegram_links`, one
+-- row per (profile, bot) — and these files are replayed as a set every time, so
+-- leaving definitions here that name a dropped column would break the second run.
+-- 0009 is where the two-bot versions belong.
 -- -----------------------------------------------------------------------------
-create or replace function public.redeem_telegram_code(p_code text, p_chat_id bigint)
-returns table (user_id uuid, full_name text, role text)
-language plpgsql
-security definer
-set search_path = public
-as $$
-declare
-  v_code    public.telegram_link_codes;
-  v_profile public.profiles;
-begin
-  select * into v_code
-  from public.telegram_link_codes c
-  where c.code = upper(trim(p_code))
-    and c.used_at is null
-    and c.expires_at > now();
-
-  if v_code.code is null then
-    return;
-  end if;
-
-  -- one Telegram account per profile, and one profile per Telegram account
-  update public.profiles
-     set telegram_user_id = p_chat_id
-   where id = v_code.user_id;
-
-  update public.telegram_link_codes
-     set used_at = now()
-   where code = v_code.code;
-
-  select * into v_profile from public.profiles where id = v_code.user_id;
-
-  return query select v_profile.id, v_profile.full_name, v_profile.role::text;
-end;
-$$;
-
-create or replace function public.unlink_telegram(p_chat_id bigint)
-returns boolean
-language plpgsql
-security definer
-set search_path = public
-as $$
-begin
-  update public.profiles
-     set telegram_user_id = null
-   where telegram_user_id = p_chat_id;
-  return found;
-end;
-$$;
-
--- -----------------------------------------------------------------------------
--- Resolve a chat id to a profile, without disclosing anything else.
--- -----------------------------------------------------------------------------
-create or replace function public.profile_for_telegram_chat(p_chat_id bigint)
-returns table (user_id uuid, full_name text, role text, email text)
-language sql
-security definer
-stable
-set search_path = public
-as $$
-  select p.id, p.full_name, p.role::text, p.email
-  from public.profiles p
-  where p.telegram_user_id = p_chat_id
-    and p.is_active = true;
-$$;
-
--- -----------------------------------------------------------------------------
--- Generate a link code for the signed-in user.
--- -----------------------------------------------------------------------------
-create or replace function public.create_telegram_link_code()
-returns table (code text, expires_at timestamptz)
-language plpgsql
-security definer
-set search_path = public, extensions
-as $$
-declare
-  v_uid  uuid := auth.uid();
-  v_code text;
-begin
-  if v_uid is null then
-    raise exception 'not authenticated' using errcode = '28000';
-  end if;
-
-  -- invalidate anything still outstanding for this user
-  update public.telegram_link_codes
-     set used_at = now()
-   where user_id = v_uid and used_at is null;
-
-  -- 6 characters from an unambiguous alphabet (no 0/O/1/I/L)
-  select string_agg(substr('23456789ABCDEFGHJKMNPQRSTUVWXYZ', (random() * 30)::int + 1, 1), '')
-    into v_code
-  from generate_series(1, 6);
-
-  return query
-  insert into public.telegram_link_codes (code, user_id)
-  values (v_code, v_uid)
-  returning telegram_link_codes.code, telegram_link_codes.expires_at;
-end;
-$$;
 
 -- -----------------------------------------------------------------------------
 -- RLS

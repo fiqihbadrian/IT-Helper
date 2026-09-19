@@ -16,10 +16,16 @@
     "cf:preview": "node scripts/cf.mjs build && node scripts/cf.mjs preview",
     "cf:deploy": "node scripts/cf.mjs build && node scripts/cf.mjs deploy",
     "cf:typegen": "wrangler types",
-    "telegram:setup": "node scripts/telegram-setup.mjs",
-    "telegram:info": "node scripts/telegram-setup.mjs --info",
-    "telegram:delete": "node scripts/telegram-setup.mjs --delete",
-    "telegram:poll": "node scripts/telegram-poll.mjs"
+    "telegram:setup": "node scripts/telegram-setup.mjs --bot employee",
+    "telegram:setup:staff": "node scripts/telegram-setup.mjs --bot staff",
+    "telegram:info": "node scripts/telegram-setup.mjs --info --bot employee",
+    "telegram:info:staff": "node scripts/telegram-setup.mjs --info --bot staff",
+    "telegram:menus": "node scripts/telegram-setup.mjs --menus --bot employee",
+    "telegram:menus:staff": "node scripts/telegram-setup.mjs --menus --bot staff",
+    "telegram:delete": "node scripts/telegram-setup.mjs --delete --bot employee",
+    "telegram:delete:staff": "node scripts/telegram-setup.mjs --delete --bot staff",
+    "telegram:poll": "node scripts/telegram-poll.mjs employee",
+    "telegram:poll:staff": "node scripts/telegram-poll.mjs staff"
   },
   "dependencies": {
     "@supabase/ssr": "^0.7.0",
