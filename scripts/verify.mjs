@@ -852,6 +852,276 @@ async function main() {
   }
 
   // ---------------------------------------------------------------------------
+  // The widget files a visitor's conversation as an ordinary ticket, written by
+  // the channel's machine profile. Everything below is about the parts of that
+  // arrangement that can go quietly wrong: an orphan profile, a source that
+  // disagrees with its channel, a machine account that collects notifications,
+  // and the one policy that lets a machine profile write anything at all.
+  console.log("\nWidget channels");
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const widget = new pg.Client({ connectionString: dbUrl, ssl: { rejectUnauthorized: false } });
+  await widget.connect();
+
+  const suffix = Date.now().toString(36);
+  let systemUserId = null;
+  let channelId = null;
+
+  try {
+    // A channel owns one machine profile and a profile needs an auth user:
+    // profiles.id is a real foreign key into auth.users, which is why channel
+    // creation goes through the admin API and why the password is never shown.
+    const created = await fetch(`${url}/auth/v1/admin/users`, {
+      method: "POST",
+      headers: {
+        apikey: serviceKey,
+        Authorization: `Bearer ${serviceKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        email: `verify-widget-${suffix}@widget.local`,
+        password: `verify-${suffix}-${suffix}`,
+        email_confirm: true,
+        user_metadata: { full_name: `Verify widget ${suffix}`, role: "employee" },
+      }),
+    });
+    const authUser = await created.json();
+    check(
+      "a channel's machine profile can be created",
+      created.ok && !!authUser.id,
+      `status ${created.status}`,
+    );
+    systemUserId = authUser.id;
+
+    await widget.query(
+      `update public.profiles set is_system = true, is_active = true, role = 'employee' where id = $1`,
+      [systemUserId],
+    );
+
+    const { rows: channelRows } = await widget.query(
+      `insert into public.channels
+         (name, slug, public_key, allowed_origins, default_priority, system_profile_id)
+       values ($1, $2, $3, $4, 'MEDIUM', $5)
+       returning id`,
+      [
+        `Verify widget ${suffix}`,
+        `verify-widget-${suffix}`,
+        `wk_verify_${suffix}`,
+        ["https://example.com"],
+        systemUserId,
+      ],
+    );
+    channelId = channelRows[0].id;
+    check("a channel can be created", !!channelId);
+
+    const rejects = async (sql, params) =>
+      widget.query(sql, params).then(
+        () => null,
+        (error) => error,
+      );
+
+    // `source` and `channel_id` are redundant for widget tickets, so the CHECK
+    // constraint is what stops the redundancy from drifting.
+    const noChannel = await rejects(
+      `insert into public.tickets (title, description, created_by, source)
+       values ('x', 'x', $1, 'widget')`,
+      [systemUserId],
+    );
+    check("a widget ticket without a channel is rejected", noChannel?.code === "23514", noChannel?.code);
+
+    const strayChannel = await rejects(
+      `insert into public.tickets (title, description, created_by, source, channel_id)
+       values ('x', 'x', $1, 'web', $2)`,
+      [systemUserId, channelId],
+    );
+    check("a channel id on a web ticket is rejected", strayChannel?.code === "23514", strayChannel?.code);
+
+    const badSource = await rejects(
+      `insert into public.tickets (title, description, created_by, source)
+       values ('x', 'x', $1, 'carrier-pigeon')`,
+      [systemUserId],
+    );
+    check("an unknown ticket source is rejected", badSource?.code === "23514", badSource?.code);
+
+    const { rows: ticketRows } = await widget.query(
+      `insert into public.tickets
+         (title, description, created_by, source, channel_id, priority)
+       values ('Verify widget ticket', 'Filed by scripts/verify.mjs', $1, 'widget', $2, 'MEDIUM')
+       returning id`,
+      [systemUserId, channelId],
+    );
+    const widgetTicket = ticketRows[0].id;
+
+    await widget.query(
+      `insert into public.ticket_contacts (ticket_id, visitor_ref, name, email, visitor_ip)
+       values ($1, 'v-verify', 'Verify Visitor', 'visitor@example.com', '203.0.113.7')`,
+      [widgetTicket],
+    );
+
+    // Machine profiles cannot sign in, so a notification addressed to one is a
+    // row nobody will ever read. `notify()` skips them.
+    const toMachine = await widget.query(
+      `select count(*)::int n from public.notifications where user_id = $1`,
+      [systemUserId],
+    );
+    check(
+      "no notification is ever addressed to a machine profile",
+      toMachine.rows[0].n === 0,
+      `saw ${toMachine.rows[0].n}`,
+    );
+
+    const toBench = await widget.query(
+      `select count(*)::int n from public.notifications
+        where ticket_id = $1 and audience = 'staff'`,
+      [widgetTicket],
+    );
+    check("a widget ticket still notifies the bench", toBench.rows[0].n > 0, `saw ${toBench.rows[0].n}`);
+
+    // The whole point of `ticket_contacts`: the timeline names the visitor, not
+    // the machine account that happens to own the row.
+    const visitorActor = await widget.query(`select public.ticket_actor_name($1, $2) as name`, [
+      widgetTicket,
+      systemUserId,
+    ]);
+    check(
+      "a widget ticket is attributed to the visitor",
+      visitorActor.rows[0].name === "Visitor — Verify Visitor",
+      visitorActor.rows[0].name,
+    );
+
+    const staffActor = await widget.query(`select public.ticket_actor_name($1, $2) as name`, [
+      widgetTicket,
+      support1.userId,
+    ]);
+    check(
+      "a staff reply is attributed to the staff member",
+      staffActor.rows[0].name === "IT Support — Fiqih Ramadhan",
+      staffActor.rows[0].name,
+    );
+
+    // -------------------------------------------------------------------------
+    // The machine profile is an ordinary `employee` as far as RLS is concerned,
+    // so it needs one narrow policy to file the contact row. This is the check
+    // that catches its absence: without it POST /session fails with 42501 and
+    // the widget cannot start a conversation at all.
+    const asMachine = new pg.Client({ connectionString: dbUrl, ssl: { rejectUnauthorized: false } });
+    await asMachine.connect();
+    try {
+      await asMachine.query("begin");
+      await asMachine.query("set local role authenticated");
+      await asMachine.query("select set_config('request.jwt.claims', $1, true)", [
+        JSON.stringify({ sub: systemUserId, role: "authenticated" }),
+      ]);
+
+      const { rows: ownRows } = await asMachine.query(
+        `insert into public.tickets (title, description, created_by, source, channel_id)
+         values ('Verify widget ticket 2', 'x', $1, 'widget', $2) returning id`,
+        [systemUserId, channelId],
+      );
+      const filed = await asMachine.query(
+        `insert into public.ticket_contacts (ticket_id, visitor_ref, name, email)
+         values ($1, 'v-verify-2', 'Second Visitor', 'second@example.com') returning ticket_id`,
+        [ownRows[0].id],
+      );
+      check(
+        "a machine profile can file the contact row for its own ticket",
+        filed.rowCount === 1,
+        `rows ${filed.rowCount}`,
+      );
+    } finally {
+      await asMachine.query("rollback");
+      await asMachine.end();
+    }
+
+    // ...and nothing wider than that. An employee who cannot even see the ticket
+    // must not be able to staple a stranger's name onto it.
+    const forged = await employee1.insert("ticket_contacts", {
+      ticket_id: widgetTicket,
+      visitor_ref: "v-forged",
+      name: "Forged",
+      email: "forged@example.com",
+    });
+    check(
+      "an employee cannot attach a contact row to someone else's ticket",
+      forged.status >= 400,
+      `status ${forged.status}`,
+    );
+
+    // -------------------------------------------------------------------------
+    // Read access. `widget_sessions` is the authorisation binding for a live
+    // conversation, so it has RLS on and no policies: the API reads it as the
+    // service role and nobody else can read it at all.
+    const staffSees = await support1.rest(
+      "ticket_contacts",
+      `select=name&ticket_id=eq.${widgetTicket}`,
+    );
+    check(
+      "staff can read a visitor's contact details",
+      staffSees.body?.[0]?.name === "Verify Visitor",
+      JSON.stringify(staffSees.body)?.slice(0, 80),
+    );
+
+    const outsider = await employee2.rest(
+      "ticket_contacts",
+      `select=name&ticket_id=eq.${widgetTicket}`,
+    );
+    check(
+      "an uninvolved employee cannot read a visitor's contact details",
+      (outsider.body ?? []).length === 0,
+      JSON.stringify(outsider.body)?.slice(0, 80),
+    );
+
+    const staffSessions = await support1.rest("widget_sessions", "select=id&limit=1");
+    check(
+      "widget sessions are unreadable even for staff",
+      staffSessions.status >= 400 || (staffSessions.body ?? []).length === 0,
+      `status ${staffSessions.status}`,
+    );
+
+    const anonSessions = await anon.rest("widget_sessions", "select=id&limit=1");
+    check(
+      "widget sessions are unreadable for anon",
+      anonSessions.status >= 400 || (anonSessions.body ?? []).length === 0,
+      `status ${anonSessions.status}`,
+    );
+
+    const empChannels = await employee1.rest("channels", "select=name&limit=1");
+    check(
+      "an employee cannot list channels",
+      (empChannels.body ?? []).length === 0,
+      `status ${empChannels.status}`,
+    );
+
+    const staffChannels = await support1.rest("channels", "select=name&limit=1");
+    check(
+      "staff can list channels",
+      (staffChannels.body ?? []).length > 0,
+      `status ${staffChannels.status}`,
+    );
+
+    // A channel is switched off, never deleted, once it has history: erasing it
+    // would leave conversations attributed to nobody.
+    const blocked = await widget
+      .query(`delete from public.channels where id = $1`, [channelId])
+      .then(
+        () => null,
+        (error) => error,
+      );
+    check("a channel with tickets cannot be deleted", blocked?.code === "23503", blocked?.code);
+  } finally {
+    // Tickets first: they are what holds the channel and the profile in place.
+    if (systemUserId) await widget.query(`delete from public.tickets where created_by = $1`, [systemUserId]);
+    if (channelId) await widget.query(`delete from public.channels where id = $1`, [channelId]);
+    if (systemUserId) {
+      await widget.query(`delete from public.profiles where id = $1`, [systemUserId]);
+      await fetch(`${url}/auth/v1/admin/users/${systemUserId}`, {
+        method: "DELETE",
+        headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}` },
+      });
+    }
+    await widget.end();
+  }
+
+  // ---------------------------------------------------------------------------
   console.log(`\n${passed} passed, ${failed} failed`);
   process.exit(failed === 0 ? 0 : 1);
 }

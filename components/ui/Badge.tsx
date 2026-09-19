@@ -1,8 +1,8 @@
 import Link from "next/link";
 
-import { PRIORITY_META, ROLE_META, STATUS_META } from "@/lib/constants";
+import { PRIORITY_META, ROLE_META, SOURCE_META, STATUS_META } from "@/lib/constants";
 import { cn } from "@/lib/utils";
-import type { TicketPriority, TicketStatus, UserRole } from "@/types";
+import type { TicketPriority, TicketSource, TicketStatus, UserRole } from "@/types";
 
 const base =
   "inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium ring-1 ring-inset whitespace-nowrap";
@@ -58,6 +58,28 @@ export function Badge({
   return (
     <span className={cn(base, "bg-surface-muted text-ink-muted ring-surface-border", className)}>
       {children}
+    </span>
+  );
+}
+
+export function SourceBadge({
+  source,
+  className,
+}: {
+  source: TicketSource;
+  className?: string;
+}) {
+  if (source === "web") return null;
+  return (
+    <span
+      className={cn(
+        base,
+        "bg-surface-muted text-ink-muted ring-surface-border",
+        className,
+      )}
+      title={`Created via ${SOURCE_META[source].label}`}
+    >
+      via {SOURCE_META[source].short}
     </span>
   );
 }

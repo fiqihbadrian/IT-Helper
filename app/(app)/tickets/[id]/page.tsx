@@ -8,11 +8,11 @@ import { TicketControls } from "@/components/tickets/TicketControls";
 import { TicketConversation } from "@/components/tickets/TicketConversation";
 import { TicketHistoryTimeline } from "@/components/tickets/TicketHistoryTimeline";
 import { Avatar } from "@/components/ui/Avatar";
-import { PriorityBadge, StatusBadge } from "@/components/ui/Badge";
+import { PriorityBadge, SourceBadge, StatusBadge } from "@/components/ui/Badge";
 import { Card, CardHeader } from "@/components/ui/Card";
 import { requireProfile } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
-import { formatDateTime } from "@/lib/utils";
+import { formatDateTime, isExternalTicket, requesterEmail, requesterName } from "@/lib/utils";
 import {
   getActiveCategories,
   getActiveTechnicians,
@@ -62,6 +62,7 @@ export default async function TicketDetailPage({
             </span>
             <StatusBadge status={ticket.status} />
             <PriorityBadge priority={ticket.priority} />
+            <SourceBadge source={ticket.source} />
           </div>
           <h1 className="mt-2 text-lg font-semibold tracking-tight text-ink lg:text-xl">
             {ticket.title}
@@ -116,13 +117,20 @@ export default async function TicketDetailPage({
             <dl className="divide-y divide-surface-border text-[13px]">
               <DetailRow label="Requester">
                 <span className="flex items-center gap-2">
-                  <Avatar name={ticket.requester?.full_name} size="sm" />
-                  <span className="truncate">{ticket.requester?.full_name ?? "—"}</span>
+                  <Avatar name={requesterName(ticket)} size="sm" />
+                  <span className="truncate">{requesterName(ticket)}</span>
                 </span>
               </DetailRow>
               <DetailRow label="Email">
-                <span className="truncate">{ticket.requester?.email ?? "—"}</span>
+                <span className="truncate">{requesterEmail(ticket)}</span>
               </DetailRow>
+              {isExternalTicket(ticket) ? (
+                <DetailRow label="Channel">
+                  <span className="truncate">
+                    {ticket.channel?.name ?? "Web widget"}
+                  </span>
+                </DetailRow>
+              ) : null}
               <DetailRow label="Assignee">
                 {ticket.assignee ? (
                   <span className="flex items-center gap-2">

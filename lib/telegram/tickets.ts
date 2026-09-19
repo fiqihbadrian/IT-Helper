@@ -79,8 +79,8 @@ export async function createTicket(
     // sub-statements of a WITH share the snapshot taken when the statement
     // began, so the outer SELECT cannot see the row the CTE just inserted.
     const { rows } = await db.query<{ id: string }>(
-      `insert into public.tickets (title, description, category_id, priority, created_by)
-       values ($1, $2, $3, $4, $5)
+      `insert into public.tickets (title, description, category_id, priority, created_by, source)
+       values ($1, $2, $3, $4, $5, 'telegram')
        returning id`,
       [input.title, input.description, input.categoryId, input.priority, userId],
     );

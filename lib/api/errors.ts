@@ -19,10 +19,13 @@ export class ApiError extends Error {
 export const badRequest = (message: string, details?: unknown) =>
   new ApiError(400, "bad_request", message, details);
 
-export const unauthorized = (message = "Missing or invalid API key.") =>
-  new ApiError(401, "unauthorized", message);
+export const unauthorized = (message = "Missing or invalid API key.", details?: unknown) =>
+  new ApiError(401, "unauthorized", message, details);
 
-export const forbidden = (message = "Your role does not allow this action.") =>
-  new ApiError(403, "forbidden", message);
+export const forbidden = (message = "Your role does not allow this action.", details?: unknown) =>
+  new ApiError(403, "forbidden", message, details);
 
 export const notFound = (message = "Not found.") => new ApiError(404, "not_found", message);
+
+export const tooManyRequests = (message = "Too many requests. Please slow down.") =>
+  new ApiError(429, "rate_limited", message);

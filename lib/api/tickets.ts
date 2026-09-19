@@ -2,7 +2,7 @@ import "server-only";
 
 import type { Queryable } from "@/lib/db/pool";
 import { badRequest, forbidden } from "@/lib/api/errors";
-import type { TicketPriority, TicketStatus } from "@/types";
+import type { TicketPriority, TicketSource, TicketStatus } from "@/types";
 
 /**
  * Query helpers for the REST API. They take an already-impersonated connection
@@ -18,6 +18,8 @@ export interface ApiTicket {
   description: string;
   status: TicketStatus;
   priority: TicketPriority;
+  /** Which surface filed the ticket: web, telegram, api or widget. */
+  source: TicketSource;
   category: string | null;
   category_id: string | null;
   requester: { id: string; full_name: string; email: string } | null;
@@ -41,6 +43,7 @@ const SELECT_TICKET = `
     t.description,
     t.status,
     t.priority,
+    t.source,
     t.category_id,
     c.name as category,
     t.created_at,
@@ -157,8 +160,8 @@ export async function createTicket(
   }
 
   const { rows } = await db.query<{ id: string }>(
-    `insert into public.tickets (title, description, category_id, priority, created_by)
-     values ($1, $2, $3, $4, $5)
+    `insert into public.tickets (title, description, category_id, priority, created_by, source)
+     values ($1, $2, $3, $4, $5, 'api')
      returning id`,
     [
       input.title,

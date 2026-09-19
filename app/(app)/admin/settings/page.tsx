@@ -7,6 +7,7 @@ import { telegramConfigured } from "@/lib/env";
 import { createClient } from "@/lib/supabase/server";
 import { getDashboardStats } from "@/services/tickets";
 import { listAllCategories } from "@/services/admin";
+import { listChannels } from "@/services/channels";
 import { listDepartments, listProfiles } from "@/services/users";
 
 export const metadata: Metadata = { title: "Settings · Admin · IT Helpdesk" };
@@ -14,14 +15,16 @@ export const metadata: Metadata = { title: "Settings · Admin · IT Helpdesk" };
 export default async function AdminSettingsPage() {
   await requireAdmin();
   const supabase = await createClient();
-  const [users, departments, categories, stats] = await Promise.all([
+  const [users, departments, categories, stats, channels] = await Promise.all([
     listProfiles(supabase),
     listDepartments(supabase),
     listAllCategories(supabase),
     getDashboardStats(supabase),
+    listChannels(supabase),
   ]);
   const database = describeDatabaseRoute();
   const onWorkers = isCloudflareRuntime();
+  const channelCount = channels.filter((channel) => channel.is_active).length;
 
   return (
     <>
@@ -108,6 +111,15 @@ export default async function AdminSettingsPage() {
                 <span className="text-ink-muted">Set BOT_TELE_ADMIN to enable</span>
               )}
             </Row>
+            <Row label="Web widget">
+              {channelCount > 0 ? (
+                <span className="text-success-ink">
+                  {channelCount} channel{channelCount === 1 ? "" : "s"}
+                </span>
+              ) : (
+                <span className="text-ink-muted">No channels yet</span>
+              )}
+            </Row>
             <Row label="Email">
               <span className="text-ink-muted">Planned</span>
             </Row>
@@ -118,9 +130,10 @@ export default async function AdminSettingsPage() {
           <CardHeader title="Roadmap" description="Where the platform is headed." />
           <ol className="divide-y divide-surface-border text-[13px]">
             <Row label="Phase 1">Ticketing, RLS, dashboards — done</Row>
-            <Row label="Phase 2">Telegram bot on the same ticket data — done</Row>
+            <Row label="Phase 2">Telegram bots and the REST API — done</Row>
             <Row label="Phase 3">Asset management (devices table ready)</Row>
             <Row label="Phase 4">Remote support agent (remote_sessions table ready)</Row>
+            <Row label="Phase 5">Embeddable web widget channels — done</Row>
           </ol>
         </Card>
       </div>

@@ -2,8 +2,8 @@ import Link from "next/link";
 
 import { Avatar } from "@/components/ui/Avatar";
 import { EmptyState } from "@/components/ui/Field";
-import { PriorityBadge, StatusBadge, TicketNumber } from "@/components/ui/Badge";
-import { formatRelative, truncate } from "@/lib/utils";
+import { PriorityBadge, SourceBadge, StatusBadge, TicketNumber } from "@/components/ui/Badge";
+import { formatRelative, requesterName, truncate } from "@/lib/utils";
 import type { TicketWithRelations } from "@/types";
 
 interface TicketTableProps {
@@ -62,14 +62,15 @@ export function TicketTable({
                   >
                     {ticket.title}
                   </Link>
-                  <p className="mt-0.5 text-xs text-ink-subtle">
-                    {ticket.category?.name ?? "Uncategorised"}
+                  <p className="mt-0.5 flex flex-wrap items-center gap-1.5 text-xs text-ink-subtle">
+                    <span>{ticket.category?.name ?? "Uncategorised"}</span>
+                    <SourceBadge source={ticket.source} />
                   </p>
                 </td>
                 {showRequester ? (
                   <td>
                     <span className="text-[13px] text-ink-muted">
-                      {ticket.requester?.full_name ?? "—"}
+                      {ticket.requester ? requesterName(ticket) : "—"}
                     </span>
                   </td>
                 ) : null}
@@ -120,6 +121,7 @@ export function TicketTable({
                 <span className="text-xs text-ink-subtle">
                   {ticket.category?.name ?? "Uncategorised"}
                 </span>
+                <SourceBadge source={ticket.source} />
                 <span className="ml-auto text-xs text-ink-subtle">
                   {formatRelative(ticket.updated_at)}
                 </span>

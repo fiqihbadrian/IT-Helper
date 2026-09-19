@@ -28,6 +28,7 @@ export interface Database {
           department_id: string | null;
           avatar_url: string | null;
           is_active: boolean;
+          is_system: boolean;
           created_at: string;
           updated_at: string;
         };
@@ -39,6 +40,7 @@ export interface Database {
           department_id?: string | null;
           avatar_url?: string | null;
           is_active?: boolean;
+          is_system?: boolean;
           created_at?: string;
           updated_at?: string;
         };
@@ -50,6 +52,7 @@ export interface Database {
           department_id?: string | null;
           avatar_url?: string | null;
           is_active?: boolean;
+          is_system?: boolean;
           created_at?: string;
           updated_at?: string;
         };
@@ -112,6 +115,8 @@ export interface Database {
           category_id: string | null;
           priority: string;
           status: string;
+          source: string;
+          channel_id: string | null;
           created_by: string;
           assigned_to: string | null;
           created_at: string;
@@ -127,6 +132,8 @@ export interface Database {
           category_id?: string | null;
           priority?: string;
           status?: string;
+          source?: string;
+          channel_id?: string | null;
           created_by: string;
           assigned_to?: string | null;
           created_at?: string;
@@ -142,12 +149,137 @@ export interface Database {
           category_id?: string | null;
           priority?: string;
           status?: string;
+          source?: string;
+          channel_id?: string | null;
           created_by?: string;
           assigned_to?: string | null;
           created_at?: string;
           updated_at?: string;
           resolved_at?: string | null;
           closed_at?: string | null;
+        };
+        Relationships: [];
+      };
+      channels: {
+        Row: {
+          id: string;
+          name: string;
+          slug: string;
+          public_key: string;
+          allowed_origins: string[];
+          department_id: string | null;
+          default_category_id: string | null;
+          default_priority: string;
+          greeting: string;
+          accent_color: string;
+          is_active: boolean;
+          system_profile_id: string;
+          created_by: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          name: string;
+          slug: string;
+          public_key: string;
+          allowed_origins?: string[];
+          department_id?: string | null;
+          default_category_id?: string | null;
+          default_priority?: string;
+          greeting?: string;
+          accent_color?: string;
+          is_active?: boolean;
+          system_profile_id: string;
+          created_by?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          name?: string;
+          slug?: string;
+          public_key?: string;
+          allowed_origins?: string[];
+          department_id?: string | null;
+          default_category_id?: string | null;
+          default_priority?: string;
+          greeting?: string;
+          accent_color?: string;
+          is_active?: boolean;
+          system_profile_id?: string;
+          created_by?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
+      ticket_contacts: {
+        Row: {
+          ticket_id: string;
+          visitor_ref: string;
+          name: string;
+          email: string;
+          visitor_ip: string | null;
+          user_agent: string | null;
+          page_url: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          ticket_id: string;
+          visitor_ref: string;
+          name: string;
+          email: string;
+          visitor_ip?: string | null;
+          user_agent?: string | null;
+          page_url?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          ticket_id?: string;
+          visitor_ref?: string;
+          name?: string;
+          email?: string;
+          visitor_ip?: string | null;
+          user_agent?: string | null;
+          page_url?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
+      widget_sessions: {
+        Row: {
+          id: string;
+          channel_id: string;
+          ticket_id: string;
+          visitor_ref: string;
+          token_hash: string;
+          created_at: string;
+          expires_at: string;
+          last_seen_at: string;
+        };
+        Insert: {
+          id?: string;
+          channel_id: string;
+          ticket_id: string;
+          visitor_ref: string;
+          token_hash: string;
+          created_at?: string;
+          expires_at?: string;
+          last_seen_at?: string;
+        };
+        Update: {
+          id?: string;
+          channel_id?: string;
+          ticket_id?: string;
+          visitor_ref?: string;
+          token_hash?: string;
+          created_at?: string;
+          expires_at?: string;
+          last_seen_at?: string;
         };
         Relationships: [];
       };
@@ -278,6 +410,7 @@ export interface Database {
     Views: Record<string, never>;
     Functions: {
       can_access_ticket: { Args: { p_ticket_id: string }; Returns: boolean };
+      ticket_actor_name: { Args: { p_ticket_id: string; p_user_id: string }; Returns: string };
       shares_ticket_with: { Args: { p_user_id: string }; Returns: boolean };
       current_role_name: { Args: Record<string, never>; Returns: string };
       is_staff: { Args: Record<string, never>; Returns: boolean };

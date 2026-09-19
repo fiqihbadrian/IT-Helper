@@ -77,3 +77,54 @@ export const updateUserSchema = z.object({
 export const profileSchema = z.object({
   fullName: z.string().trim().min(3, "Full name is required").max(120),
 });
+
+/**
+ * One embeddable website channel.
+ *
+ * `origins` arrives as a textarea — one origin per line — because that is how
+ * somebody copying URLs out of a browser will naturally paste them. Parsing it
+ * here means the stored array is always trimmed, deduplicated and lowercase, so
+ * the comparison in `isOriginAllowed` never fails on a stray space.
+ */
+export const channelSchema = z.object({
+  id: z.string().uuid().optional(),
+  name: z.string().trim().min(2, "Name is required").max(80),
+  origins: z.string().trim().max(2000),
+  greeting: z.string().trim().min(1, "Greeting is required").max(400),
+  accentColor: z
+    .string()
+    .trim()
+    .regex(/^#[0-9a-fA-F]{6}$/, "Use a hex colour such as #4f46e5"),
+  defaultPriority: z.enum(TICKET_PRIORITIES as [string, ...string[]]),
+  defaultCategoryId: z.string().uuid().nullable(),
+  departmentId: z.string().uuid().nullable(),
+});
+
+export type ChannelInput = z.infer<typeof channelSchema>;
+
+export const channelStateSchema = z.object({
+  id: z.string().uuid(),
+  isActive: z.boolean(),
+});
+
+/** `example.com` is a host, not an origin; be forgiving about the scheme. */
+export function parseOrigins(value: string): string[] {
+  const seen = new Set<string>();
+
+  for (const line of value.split(/\r?\n/)) {
+    let entry = line.trim().replace(/\/+$/, "");
+    if (!entry) continue;
+    if (entry === "*") {
+      seen.add("*");
+      continue;
+    }
+    if (!/^https?:\/\//i.test(entry)) entry = `https://${entry}`;
+    seen.add(entry.toLowerCase());
+  }
+
+  return [...seen];
+}
+
+export function formatOrigins(origins: string[] | null | undefined): string {
+  return (origins ?? []).join("\n");
+}

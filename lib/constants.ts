@@ -1,4 +1,4 @@
-import type { TicketPriority, TicketStatus, UserRole } from "@/types";
+import type { TicketPriority, TicketSource, TicketStatus, UserRole } from "@/types";
 
 /**
  * Full class strings (not interpolated) so Tailwind's scanner keeps them.
@@ -86,3 +86,18 @@ export const ALLOWED_UPLOAD_MIME_TYPES = [
 ];
 
 export const MAX_UPLOAD_BYTES = 10 * 1024 * 1024; // 10 MB, matches the bucket limit
+
+/**
+ * Where a ticket came in from.
+ *
+ * `web` is the app itself; the other three are the surfaces that were added
+ * later. It is a stored column rather than something inferred, because "web",
+ * "api" and "telegram" all arrive without a channel and are still different
+ * origins — inferring would collapse them.
+ */
+export const SOURCE_META: Record<TicketSource, { label: string; short: string }> = {
+  web: { label: "Web app", short: "web" },
+  telegram: { label: "Telegram", short: "telegram" },
+  api: { label: "REST API", short: "api" },
+  widget: { label: "Web widget", short: "widget" },
+};

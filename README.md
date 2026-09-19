@@ -1,4 +1,4 @@
-# IT Helpdesk — Phase 1
+# IT Helpdesk
 
 Internal IT support ticketing system. Next.js (App Router) + TypeScript + Tailwind +
 Supabase (Postgres, Auth, Storage). Authorisation is enforced by Postgres Row Level
@@ -66,23 +66,29 @@ Demo accounts (password `Password123!`):
 ```text
 app/
   (app)/            authenticated shell: dashboard, tickets, notifications, profile, admin
-  actions/          server actions (auth, tickets, notifications, admin)
+  actions/          server actions (auth, tickets, notifications, admin, channels)
+  api/              Telegram webhooks, REST API v1, widget API v1
   login/            public sign-in
 components/
   admin/ auth/ dashboard/ layout/ notifications/ profile/ tickets/ ui/
 lib/
   supabase/         browser, server, admin (service-role) and middleware clients
+  api/              REST API plumbing (auth, errors, responses, ticket queries)
+  telegram/         bot plumbing (client, menus, commands, sessions, webhook)
+  widget/           widget plumbing (keys, channels, CORS, rate limits, sessions)
   auth.ts           session + role guards
-  constants.ts      status / priority / role metadata
+  constants.ts      status / priority / role / source metadata
   navigation.ts     per-role sidebar definition
   upload.ts         storage upload + signed URLs
   validation.ts     zod schemas
+public/
+  widget.js         embeddable chat widget (vanilla, shadow DOM, no dependencies)
 services/           every database query lives here, not in components
 types/              domain types + generated-style database types
 supabase/
   migrations/       0001 schema, 0002 triggers, 0003 RLS, 0004 storage, 0005 stats,
                     0006 API keys, 0007 Telegram, 0008 profile visibility,
-                    0009 two Telegram bots
+                    0009 two Telegram bots, 0010 widget channels
   seed.sql          demo departments, categories, users, tickets
 ```
 
@@ -167,9 +173,10 @@ NEXT_PUBLIC_TELEGRAM_STAFF_BOT_USERNAME=bian_itbot
 longer, more explicit names; the `TELEGRAM_*` pair wins when both are set.
 
 ```bash
-npm run telegram:setup        # register the employee webhook
-npm run telegram:setup:staff  # register the staff webhook
+npm run telegram:setup        <base-url>  # register the employee webhook
+npm run telegram:setup:staff  <base-url>  # register the staff webhook
 npm run telegram:info         # what Telegram holds for the employee bot
+npm run telegram:info:staff   # what Telegram holds for the staff bot
 npm run telegram:poll         # local dev, no tunnel (employee bot)
 npm run telegram:poll:staff   # local dev, no tunnel (staff bot)
 ```
@@ -274,7 +281,7 @@ reach from Hyperdrive, so the connection string uses the Tokyo pooler.
 across request contexts and a global pool would hand out sockets from a finished
 request. Callers only ever see `asUser()` / `asSystem()`.
 
-Secrets (`SUPABASE_SERVICE_ROLE_KEY`, `TELEGRAM_BOT_TOKEN`,
+Secrets (`SUPABASE_SERVICE_ROLE_KEY`, `BOT_TELE_KARYAWAN`, `BOT_TELE_ADMIN`,
 `TELEGRAM_WEBHOOK_SECRET`, `DISPATCH_SECRET`) live in the Cloudflare dashboard;
 `NEXT_PUBLIC_*` values live in `wrangler.jsonc` because they are public anyway.
 After a deploy the Telegram webhook must be re-registered once — it is per bot
@@ -282,10 +289,63 @@ token and Cloudflare knows nothing about Telegram.
 
 See [docs/DEPLOY.md](docs/DEPLOY.md).
 
+## Web widget (Phase 5)
+
+Any website can embed the chat widget with one line, and the conversations it
+starts land in the same ticket queue as everything else.
+
+```html
+<script src="https://it-helpdesk.fiqihbadrian.workers.dev/widget.js"
+        data-key="wk_..." async></script>
+```
+
+**A visitor is not a user.** The obvious design — an account per visitor — is
+wrong: visitors have no role, no department, no business in `/admin/users` and no
+business in the assignee dropdown next to real colleagues, and unlike an employee
+there is nobody to ever deactivate them. Instead each channel owns one *system
+profile* (`profiles.is_system`), the visitor's words are filed as that profile,
+and their real identity lives in `ticket_contacts`.
+
+That keeps RLS untouched. A widget request runs through the same `asUser()`
+impersonation as the bot and the API, so `tickets_insert`'s
+`created_by = auth.uid()` is satisfied by the system profile and every policy
+keeps working verbatim — there is no second, weaker authorisation path to audit.
+`is_system` is what hides those profiles from the user list, the assignee picker
+and the notification table.
+
+The public key is public by definition, so `allowed_origins` is a speed bump, not
+a wall. What actually protects a conversation:
+
+- a `widget_sessions` row binds one token to **exactly one** `ticket_id`, and
+  `GET /messages` reads that column rather than the request — there is no ticket
+  id to guess;
+- `allowed_origins` empty means **deny** (fail closed); `"*"` means allow any;
+- per-IP and per-ticket rate limits counted **in the database**, because Worker
+  isolate memory is short-lived and a cold start would reset an in-memory counter;
+- the token is stored as a sha256 hash, so a database dump holds nothing replayable.
+
+An empty `allowed_origins` array is the default on purpose: a half-configured
+channel refuses traffic instead of leaking it.
+
+```bash
+curl -s -H "Origin: https://example.com" -H "X-Widget-Key: wk_..." \
+  https://your-app/api/widget/v1/config
+```
+
+```
+GET    /api/widget/v1/config     channel name, greeting, accent colour
+POST   /api/widget/v1/session    start a conversation, returns the token once
+GET    /api/widget/v1/messages   read (?since=<ISO>)
+POST   /api/widget/v1/messages   reply
+```
+
+Widget v1 is text-only — no visitor attachments. See [docs/WIDGET.md](docs/WIDGET.md).
+
 ## Future phases
 
 - **Phase 3** Asset management. `devices` table is created and locked to admins.
 - **Phase 4** Remote support. `remote_sessions` links `ticket → device → operator`.
 
-Nothing in Phase 1 depends on web-only assumptions: the ticket model, history and
-notifications are plain relational data.
+Every phase so far has reused the same ticket model, history and notification
+tables without widening them: the widget added a source column and two side
+tables, and the bot and the API added none.

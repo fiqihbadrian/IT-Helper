@@ -2,6 +2,8 @@ import { clsx, type ClassValue } from "clsx";
 import { format, formatDistanceToNowStrict, isValid, parseISO } from "date-fns";
 import { twMerge } from "tailwind-merge";
 
+import type { TicketWithRelations } from "@/types";
+
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
@@ -52,4 +54,24 @@ export function isImageMime(mime: string) {
 export function truncate(value: string, length = 140) {
   const clean = value.replace(/\s+/g, " ").trim();
   return clean.length > length ? `${clean.slice(0, length - 1)}…` : clean;
+}
+
+/**
+ * Who a ticket is from, as a person should read it.
+ *
+ * A widget ticket's requester is the channel's machine profile, whose name is
+ * "Widget: Acme Support" — true in the database, meaningless in a timeline. The
+ * visitor's own name lives on the contact row and wins.
+ */
+export function requesterName(ticket: TicketWithRelations) {
+  return ticket.contact?.name ?? ticket.requester?.full_name ?? "Requester";
+}
+
+export function requesterEmail(ticket: TicketWithRelations) {
+  return ticket.contact?.email ?? ticket.requester?.email ?? "—";
+}
+
+/** True when the requester is somebody outside the company. */
+export function isExternalTicket(ticket: TicketWithRelations) {
+  return ticket.source === "widget" && ticket.contact !== null;
 }

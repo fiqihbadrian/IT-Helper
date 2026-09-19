@@ -15,6 +15,7 @@ export async function listProfiles(db: Db): Promise<ProfileWithDepartment[]> {
        is_active, created_at, updated_at,
        department:departments ( id, name )`,
     )
+    .eq("is_system", false)
     .order("created_at", { ascending: true });
   if (error) throw new Error(error.message);
   return (data ?? []) as unknown as ProfileWithDepartment[];

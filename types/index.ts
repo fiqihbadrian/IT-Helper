@@ -10,6 +10,9 @@ export type TicketStatus =
 
 export type TicketPriority = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
 
+/** Where a ticket came in from. `widget` tickets always carry a `channel_id`. */
+export type TicketSource = "web" | "telegram" | "api" | "widget";
+
 export type HistoryAction =
   | "CREATED"
   | "STATUS_CHANGED"
@@ -34,6 +37,8 @@ export interface Profile {
   department_id: string | null;
   avatar_url: string | null;
   is_active: boolean;
+  /** True for the per-channel identities that stand in for website visitors. */
+  is_system: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -55,6 +60,8 @@ export interface Ticket {
   category_id: string | null;
   priority: TicketPriority;
   status: TicketStatus;
+  source: TicketSource;
+  channel_id: string | null;
   created_by: string;
   assigned_to: string | null;
   created_at: string;
@@ -109,6 +116,9 @@ export interface TicketWithRelations extends Ticket {
   category: Pick<Category, "id" | "name"> | null;
   requester: Pick<Profile, "id" | "full_name" | "email" | "avatar_url"> | null;
   assignee: Pick<Profile, "id" | "full_name" | "email" | "avatar_url"> | null;
+  /** Present only on widget tickets, where the requester is a visitor. */
+  contact: Pick<TicketContact, "name" | "email"> | null;
+  channel: Pick<Channel, "id" | "name" | "slug"> | null;
 }
 
 export interface CommentWithRelations extends TicketComment {
@@ -124,6 +134,37 @@ export interface TicketDetail extends TicketWithRelations {
   comments: CommentWithRelations[];
   history: HistoryWithActor[];
   attachments: TicketAttachment[];
+}
+
+/** An embeddable chat channel: one per customer website. */
+export interface Channel {
+  id: string;
+  name: string;
+  slug: string;
+  public_key: string;
+  allowed_origins: string[];
+  department_id: string | null;
+  default_category_id: string | null;
+  default_priority: TicketPriority;
+  greeting: string;
+  accent_color: string;
+  system_profile_id: string;
+  is_active: boolean;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Identity a website visitor gave the widget, one row per external ticket. */
+export interface TicketContact {
+  ticket_id: string;
+  visitor_ref: string;
+  name: string;
+  email: string;
+  visitor_ip: string | null;
+  user_agent: string | null;
+  page_url: string | null;
+  created_at: string;
 }
 
 export interface TicketFilters {

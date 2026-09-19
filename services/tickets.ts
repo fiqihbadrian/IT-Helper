@@ -20,10 +20,12 @@ export type Db = SupabaseClient<Database>;
 
 export const TICKET_SELECT = `
   id, ticket_number, title, description, category_id, priority, status,
-  created_by, assigned_to, created_at, updated_at, resolved_at, closed_at,
+  source, channel_id, created_by, assigned_to, created_at, updated_at, resolved_at, closed_at,
   category:categories ( id, name ),
   requester:profiles!tickets_created_by_fkey ( id, full_name, email, avatar_url ),
-  assignee:profiles!tickets_assigned_to_fkey ( id, full_name, email, avatar_url )
+  assignee:profiles!tickets_assigned_to_fkey ( id, full_name, email, avatar_url ),
+  contact:ticket_contacts ( name, email ),
+  channel:channels ( id, name, slug )
 `;
 
 const PRIORITY_RANK: Record<TicketPriority, number> = {
