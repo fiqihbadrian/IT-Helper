@@ -75,3 +75,14 @@ export function requesterEmail(ticket: TicketWithRelations) {
 export function isExternalTicket(ticket: TicketWithRelations) {
   return ticket.source === "widget" && ticket.contact !== null;
 }
+
+/**
+ * Keep a `?next=` value pointing inside this app.
+ *
+ * `//evil.example.com` and `https://evil.example.com` are both valid absolute
+ * URLs to a browser, so "starts with a slash" is not enough on its own.
+ */
+export function safeNextPath(value: string | null | undefined, fallback = "/dashboard") {
+  if (!value || !value.startsWith("/") || value.startsWith("//")) return fallback;
+  return value;
+}

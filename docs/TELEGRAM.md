@@ -407,3 +407,30 @@ kode satu-bot yang menanyakan `profiles.telegram_user_id`. Gejalanya bukan error
 yang jelas di log, tapi `pending_update_count` yang tidak mau turun dan
 `last_error_message: 500 Internal Server Error`. Deploy ulang menyelesaikannya, dan
 update tertunda langsung diproses.
+
+## Masuk ke web lewat Telegram
+
+Kalau akun Telegram sudah terhubung, kata sandi tidak perlu diingat lagi.
+
+1. Buka `/auth/telegram` (atau tombol **Sign in with Telegram** di halaman login).
+2. Halaman menampilkan kode 8 karakter dan tombol ke tiap bot yang punya username.
+3. Tombol itu membuka Telegram dengan kode sudah terisi — tekan **Start**.
+4. Tab browser lanjut sendiri dan masuk sebagai akun yang terhubung ke chat itu.
+
+Dari sisi bot, tombol itu mengirim `/start login_KODE`; mengetik
+`/login KODE` manual juga jalan. Kode hidup **10 menit** dan sekali pakai.
+
+**Kenapa ini aman.** Kode bukan kredensial milik orang lain. Bot menyelesaikan
+pengirimnya lewat `telegram_links` lebih dulu, jadi kode hanya bisa mengikat
+akun milik si pengirim. Siapa pun yang menyalin kode dari layar orang lain
+paling banter membuat browser itu masuk sebagai dirinya sendiri. Selain itu
+browser memegang cookie `it-helpdesk-login` yang diterbitkan bersama kodenya —
+tanpa cookie itu kode tidak bisa ditukar. Server lalu mengecek ulang bahwa
+profilnya masih aktif dan bukan akun mesin, baru membuat sesi Supabase asli.
+
+Kode disimpan di `web_login_codes`: tanpa policy, tanpa grant ke `anon` maupun
+`authenticated`, dan fungsi klaim/pemakaiannya hanya bisa dipanggil
+`service_role`.
+
+Karyawan yang belum pernah menghubungkan Telegram tetap pakai email + kata
+sandi. Alur itu tidak berubah.

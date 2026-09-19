@@ -9,6 +9,7 @@ import type {
   TelegramMessage,
 } from "@/lib/telegram/client";
 import { telegramApi } from "@/lib/telegram/client";
+import { LOGIN_CODE_LENGTH, normaliseCode, readLoginPayload } from "@/lib/telegram/login";
 import { ensureDefaultCommands } from "@/lib/telegram/menu";
 import {
   clearSession,
@@ -17,6 +18,7 @@ import {
   getSession,
   profileForChat,
   redeemLinkCode,
+  redeemWebLoginCode,
   setSession,
   unlinkChat,
   type BotSession,
@@ -104,6 +106,7 @@ function helpText(ctx: BotContext) {
     "",
     "*Akun*",
     "`/status` — ringkasan akun",
+    "`/login KODE` — masuk ke web tanpa kata sandi",
     "`/unlink` — putuskan akun Telegram ini",
     "`/help` — pesan ini",
   );
@@ -349,6 +352,11 @@ async function handleUpload(
 async function handleCommand(ctx: BotContext, chatId: number, command: string, args: string) {
   if (command === "start") {
     if (args) {
+      // A deep link from the login page carries `login_<CODE>`; anything else is
+      // an account link code. The prefix is the whole distinction.
+      const loginCode = readLoginPayload(args);
+      if (loginCode) return await handleWebLogin(ctx, chatId, loginCode);
+
       await handleLink(ctx, chatId, args);
       return undefined;
     }
@@ -449,6 +457,10 @@ async function handleCommand(ctx: BotContext, chatId: number, command: string, a
       await closeByNumberCommand(ctx, chatId, profile.user_id, args);
       break;
 
+    case "login":
+      await handleWebLogin(ctx, chatId, args);
+      break;
+
     case "status":
       await showStatus(ctx, chatId, profile);
       break;
@@ -485,6 +497,56 @@ async function ensureEligible(
       "Untuk melaporkan masalah, pakai bot karyawan. Hubungi admin kalau ini keliru.",
   );
   return false;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Signing in to the web app                                                  */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Claim a pending web sign-in for whoever is talking.
+ *
+ * The profile is looked up from the chat, not from the message, so the code
+ * only ever binds to the sender's own account. Someone who reads a code off
+ * somebody else's screen can therefore only sign that browser in as themselves.
+ */
+async function handleWebLogin(ctx: BotContext, chatId: number, rawCode: string) {
+  const code = normaliseCode(rawCode);
+
+  if (code.length !== LOGIN_CODE_LENGTH) {
+    await ctx.api.sendMessage(
+      chatId,
+      "Format: `/login KODE`\n\nKodenya ada di halaman *Sign in with Telegram* di web, " +
+        "dan tombol di halaman itu mengirimkannya ke sini otomatis.",
+    );
+    return undefined;
+  }
+
+  const profile = await profileForChat(ctx.bot, chatId);
+
+  if (!profile) {
+    await ctx.api.sendMessage(
+      chatId,
+      "Chat ini belum terhubung ke akun helpdesk, jadi belum bisa dipakai untuk masuk.\n\n" +
+        "Hubungkan dulu di *Profil → Telegram*, lalu kirim `/start KODE` ke sini.",
+    );
+    return undefined;
+  }
+
+  if (!(await ensureEligible(ctx, chatId, profile))) return undefined;
+
+  const claimed = await redeemWebLoginCode(code, profile.user_id);
+
+  await ctx.api.sendMessage(
+    chatId,
+    claimed
+      ? `✅ *${md(profile.full_name)}* — browser tadi sekarang masuk.\n\n` +
+          "Kembali ke tab itu; halamannya lanjut sendiri."
+      : "Kode itu tidak berlaku.\n\nKode cuma hidup 10 menit dan hanya bisa dipakai sekali. " +
+          "Ambil kode baru di halaman *Sign in with Telegram*.",
+  );
+
+  return profile.user_id;
 }
 
 async function handleLink(ctx: BotContext, chatId: number, code: string) {

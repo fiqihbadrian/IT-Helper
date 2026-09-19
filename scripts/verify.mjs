@@ -1122,6 +1122,104 @@ async function main() {
   }
 
   // ---------------------------------------------------------------------------
+  console.log("\nTelegram web sign-in");
+
+  // The handshake is two halves that have to stay in step: the bot binds a code
+  // to the profile behind the chat, the browser spends it with the cookie it was
+  // issued. Both are SECURITY DEFINER functions on a service-role-only table, so
+  // they are exercised through a direct connection rather than through RLS.
+  const login = new pg.Client({ connectionString: dbUrl, ssl: { rejectUnauthorized: false } });
+  await login.connect();
+
+  try {
+    const EMPLOYEE = "44444444-4444-4444-8444-444444444444";
+    const OTHER = "55555555-5555-4555-8555-555555555555";
+    const CODE = "VERIFY01";
+    const TOKEN = "verify-browser-token";
+
+    await login.query(
+      `insert into public.web_login_codes (code, browser_token, expires_at)
+       values ($1, $2, now() + interval '10 minutes')`,
+      [CODE, TOKEN],
+    );
+
+    const claim = (code, uid) =>
+      login
+        .query(`select public.redeem_web_login_code($1, $2) as ok`, [code, uid])
+        .then((result) => result.rows[0].ok);
+
+    const spend = (code, token) =>
+      login
+        .query(`select public.consume_web_login_code($1, $2) as profile_id`, [code, token])
+        .then((result) => result.rows[0].profile_id);
+
+    check("an unknown sign-in code is refused", (await claim("NOPE1234", EMPLOYEE)) === false);
+    check("a null profile cannot claim a code", (await claim(CODE, null)) === false);
+    check("a linked chat can claim a sign-in code", (await claim(CODE, EMPLOYEE)) === true);
+
+    // First claim wins, so a second chat cannot point a live code at itself.
+    check("a second chat cannot re-claim a code", (await claim(CODE, OTHER)) === false);
+
+    check(
+      "the wrong browser cookie cannot spend a code",
+      (await spend(CODE, "some-other-browser")) === null,
+    );
+    check(
+      "the right browser cookie yields the claiming profile",
+      (await spend(CODE, TOKEN)) === EMPLOYEE,
+    );
+    check("a code is single use", (await spend(CODE, TOKEN)) === null);
+
+    // An expired code is a dead code, claim or spend.
+    await login.query(
+      `insert into public.web_login_codes (code, browser_token, profile_id, expires_at)
+       values ('VERIFY02', 'verify-browser-token', $1, now() - interval '1 minute')`,
+      [EMPLOYEE],
+    );
+        check("an expired code cannot be spent", (await spend("VERIFY02", TOKEN)) === null);
+    check("an expired code cannot be claimed", (await claim("VERIFY02", EMPLOYEE)) === false);
+
+    // Nobody signed in may spend a handshake, and nothing at all may read the
+    // table: it is service-role only, with no policies and no grants.
+    const staffRead = await support1.rest("web_login_codes", "select=code&limit=1");
+    check(
+      "a signed-in user cannot read pending sign-in codes",
+      staffRead.status >= 400,
+      `status ${staffRead.status}`,
+    );
+
+    const anonRead = await anon.rest("web_login_codes", "select=code&limit=1");
+    check(
+      "an anonymous caller cannot read pending sign-in codes",
+      anonRead.status >= 400,
+      `status ${anonRead.status}`,
+    );
+
+    const anonClaim = await anon.rpc("redeem_web_login_code", {
+      p_code: "VERIFY03",
+      p_profile_id: EMPLOYEE,
+    });
+    check(
+      "an anonymous caller cannot claim a sign-in code",
+      anonClaim.status >= 400,
+      `status ${anonClaim.status}`,
+    );
+
+    const staffClaim = await support1.rpc("consume_web_login_code", {
+      p_code: CODE,
+      p_browser_token: TOKEN,
+    });
+    check(
+      "a signed-in user cannot spend a sign-in code",
+      staffClaim.status >= 400,
+      `status ${staffClaim.status}`,
+    );
+  } finally {
+    await login.query(`delete from public.web_login_codes where code like 'VERIFY%'`);
+    await login.end();
+  }
+
+  // ---------------------------------------------------------------------------
   console.log(`\n${passed} passed, ${failed} failed`);
   process.exit(failed === 0 ? 0 : 1);
 }

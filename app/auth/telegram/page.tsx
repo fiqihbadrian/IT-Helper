@@ -1,17 +1,24 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { Send } from "lucide-react";
+import { ArrowLeft } from "lucide-react";
 
-import { LoginForm } from "@/components/auth/LoginForm";
+import { TelegramLogin } from "@/components/auth/TelegramLogin";
 import { ThemeToggle } from "@/components/layout/ThemeToggle";
 import { getCurrentProfile } from "@/lib/auth";
+import { safeNextPath } from "@/lib/utils";
 
-export const metadata: Metadata = { title: "Sign in · IT Helpdesk" };
+export const metadata: Metadata = { title: "Sign in with Telegram · IT Helpdesk" };
 
-export default async function LoginPage() {
+export default async function TelegramLoginPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ next?: string }>;
+}) {
   const profile = await getCurrentProfile();
   if (profile) redirect("/dashboard");
+
+  const { next } = await searchParams;
 
   return (
     <div className="flex min-h-screen items-center justify-center px-4 py-10">
@@ -28,32 +35,22 @@ export default async function LoginPage() {
         </div>
 
         <div className="card px-5 py-6">
-          <h1 className="text-base font-semibold">Sign in</h1>
+          <h1 className="text-base font-semibold">Sign in with Telegram</h1>
           <p className="mt-1 text-[13px] text-ink-muted">
-            Use your company email address.
+            Only works if you have already linked your Telegram account. No password needed.
           </p>
           <div className="mt-5">
-            <LoginForm />
+            <TelegramLogin next={safeNextPath(next)} />
           </div>
-
-          <div className="mt-5 flex items-center gap-3">
-            <span className="h-px flex-1 bg-surface-border" />
-            <span className="text-[11px] uppercase tracking-wide text-ink-subtle">or</span>
-            <span className="h-px flex-1 bg-surface-border" />
-          </div>
-
-          <Link
-            href="/auth/telegram"
-            className="btn-ghost mt-4 w-full border border-surface-border"
-          >
-            <Send className="h-4 w-4" aria-hidden="true" />
-            Sign in with Telegram
-          </Link>
         </div>
 
-        <p className="mt-4 text-center text-xs text-ink-subtle">
-          Trouble signing in? Contact the IT Support team.
-        </p>
+        <Link
+          href="/login"
+          className="mt-4 flex items-center justify-center gap-1.5 text-xs text-ink-subtle hover:text-ink"
+        >
+          <ArrowLeft className="h-3.5 w-3.5" aria-hidden="true" />
+          Use email and password instead
+        </Link>
       </div>
     </div>
   );

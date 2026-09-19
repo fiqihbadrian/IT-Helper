@@ -283,6 +283,33 @@ export interface Database {
         };
         Relationships: [];
       };
+      web_login_codes: {
+        Row: {
+          code: string;
+          browser_token: string;
+          profile_id: string | null;
+          created_at: string;
+          expires_at: string;
+          used_at: string | null;
+        };
+        Insert: {
+          code: string;
+          browser_token: string;
+          profile_id?: string | null;
+          created_at?: string;
+          expires_at: string;
+          used_at?: string | null;
+        };
+        Update: {
+          code?: string;
+          browser_token?: string;
+          profile_id?: string | null;
+          created_at?: string;
+          expires_at?: string;
+          used_at?: string | null;
+        };
+        Relationships: [];
+      };
       ticket_comments: {
         Row: {
           id: string;
@@ -451,6 +478,14 @@ export interface Database {
         Returns: Array<{ user_id: string; full_name: string; role: string }>;
       };
       unlink_telegram: { Args: { p_bot: string; p_chat_id: number }; Returns: boolean };
+      redeem_web_login_code: {
+        Args: { p_code: string; p_profile_id: string };
+        Returns: boolean;
+      };
+      consume_web_login_code: {
+        Args: { p_code: string; p_browser_token: string };
+        Returns: string | null;
+      };
     };
     Enums: Record<string, never>;
     CompositeTypes: Record<string, never>;

@@ -176,6 +176,23 @@ export async function redeemLinkCode(bot: BotKind, code: string, chatId: number)
   });
 }
 
+/**
+ * Bind a pending web sign-in to the profile this chat is linked to.
+ *
+ * The profile comes from `telegram_links`, never from the message, which is why
+ * a code someone else reads off a screen can only ever sign them in as
+ * themselves.
+ */
+export async function redeemWebLoginCode(code: string, profileId: string) {
+  return asSystem(async (db) => {
+    const { rows } = await db.query<{ redeem_web_login_code: boolean }>(
+      `select public.redeem_web_login_code($1, $2) as redeem_web_login_code`,
+      [code, profileId],
+    );
+    return rows[0]?.redeem_web_login_code ?? false;
+  });
+}
+
 export async function unlinkChat(bot: BotKind, chatId: number) {
   return asSystem(async (db) => {
     const { rows } = await db.query<{ unlink_telegram: boolean }>(

@@ -23,6 +23,7 @@ const EMPLOYEE_COMMANDS: BotCommand[] = [
   { command: "ticket", description: "Lihat satu tiket: /ticket IT-000004" },
   { command: "reply", description: "Balas tiket: /reply IT-000004 pesan" },
   { command: "status", description: "Ringkasan akun dan tiket kamu" },
+  { command: "login", description: "Masuk ke web: /login KODE" },
   { command: "help", description: "Daftar perintah" },
   { command: "unlink", description: "Putuskan akun Telegram ini" },
 ];
@@ -39,6 +40,7 @@ const STAFF_COMMANDS: BotCommand[] = [
   { command: "claim", description: "Ambil tiket: /claim IT-000004" },
   { command: "close", description: "Tutup tiket: /close IT-000004" },
   { command: "status", description: "Ringkasan akun dan antrean tim" },
+  { command: "login", description: "Masuk ke web: /login KODE" },
   { command: "help", description: "Daftar perintah" },
   { command: "unlink", description: "Putuskan akun Telegram ini" },
 ];

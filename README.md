@@ -88,7 +88,7 @@ types/              domain types + generated-style database types
 supabase/
   migrations/       0001 schema, 0002 triggers, 0003 RLS, 0004 storage, 0005 stats,
                     0006 API keys, 0007 Telegram, 0008 profile visibility,
-                    0009 two Telegram bots, 0010 widget channels
+                    0009 two Telegram bots, 0010 widget channels, 0011 Telegram web sign-in
   seed.sql          demo departments, categories, users, tickets
 ```
 
@@ -251,6 +251,17 @@ POST   /api/v1/tickets/{number}/comments
 ```
 
 See [docs/API.md](docs/API.md).
+
+## Sign in with Telegram
+
+Linking a chat is enough to sign in without a password: open `/auth/telegram`,
+the page shows an 8-character code, the button opens Telegram with the code
+already in it, and the tab finishes signing itself in.
+
+The code is not a credential for somebody else's account — the bot resolves the
+sender through `telegram_links` first, so a stolen code only ever signs its
+thief in as themselves, and it is single-use and bound to a cookie. See
+[docs/TELEGRAM.md](docs/TELEGRAM.md).
 
 ## Deploy (Cloudflare Workers)
 

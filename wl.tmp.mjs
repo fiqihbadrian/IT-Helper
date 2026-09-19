@@ -1,0 +1,12 @@
+import pg from "pg";
+const url = (await import("node:fs")).readFileSync(".env.local","utf8").match(/^SUPABASE_DB_URL=(.*)$/m)[1].trim();
+const c = new pg.Client({ connectionString: url, ssl: { rejectUnauthorized: false } });
+await c.connect();
+const claim = async (code, uid) => (await c.query("select public.redeem_web_login_code($1,$2) as ok",[code,uid])).rows[0].ok;
+console.log("unknown code      ->", await claim("ZZZZZZZZ", "44444444-4444-4444-8444-444444444444"));
+console.log("real code         ->", await claim(process.argv[2], "44444444-4444-4444-8444-444444444444"));
+console.log("second claim      ->", await claim(process.argv[2], "11111111-1111-4111-8111-111111111111"));
+console.log("null profile      ->", await claim(process.argv[2], null));
+const row = (await c.query("select code, profile_id, used_at from public.web_login_codes where code=$1",[process.argv[2]])).rows[0];
+console.log("row               ->", row);
+await c.end();
