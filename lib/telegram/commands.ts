@@ -17,6 +17,7 @@ import {
   flushNotifications,
   getSession,
   profileForChat,
+  profileForChatAcrossBots,
   redeemLinkCode,
   redeemWebLoginCode,
   setSession,
@@ -522,31 +523,37 @@ async function handleWebLogin(ctx: BotContext, chatId: number, rawCode: string) 
     return undefined;
   }
 
-  const profile = await profileForChat(ctx.bot, chatId);
+  const found = await profileForChatAcrossBots(chatId, ctx.bot);
 
-  if (!profile) {
+  if (!found) {
     await ctx.api.sendMessage(
       chatId,
       "Chat ini belum terhubung ke akun helpdesk, jadi belum bisa dipakai untuk masuk.\n\n" +
-        "Hubungkan dulu di *Profil → Telegram*, lalu kirim `/start KODE` ke sini.",
+        "Masuk dulu pakai email, lalu buka *Profil → Telegram* dan hubungkan. " +
+        "Setelah itu kode di halaman *Sign in with Telegram* bisa dipakai.",
     );
     return undefined;
   }
 
-  if (!(await ensureEligible(ctx, chatId, profile))) return undefined;
+  // The audience rule belongs to the bot that owns the link — the staff bot
+  // refuses non-staff, the employee bot has no such rule. Testing it against the
+  // bot that merely *received* the message would unlink a chat for no reason.
+  if (found.bot === ctx.bot && !(await ensureEligible(ctx, chatId, found.profile))) {
+    return undefined;
+  }
 
-  const claimed = await redeemWebLoginCode(code, profile.user_id);
+  const claimed = await redeemWebLoginCode(code, found.profile.user_id);
 
   await ctx.api.sendMessage(
     chatId,
     claimed
-      ? `✅ *${md(profile.full_name)}* — browser tadi sekarang masuk.\n\n` +
+      ? `✅ *${md(found.profile.full_name)}* — browser tadi sekarang masuk.\n\n` +
           "Kembali ke tab itu; halamannya lanjut sendiri."
       : "Kode itu tidak berlaku.\n\nKode cuma hidup 10 menit dan hanya bisa dipakai sekali. " +
           "Ambil kode baru di halaman *Sign in with Telegram*.",
   );
 
-  return profile.user_id;
+  return found.profile.user_id;
 }
 
 async function handleLink(ctx: BotContext, chatId: number, code: string) {

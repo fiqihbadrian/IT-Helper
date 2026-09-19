@@ -4,7 +4,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Check, Copy, ExternalLink, Loader2, RotateCw } from "lucide-react";
 
 import { Alert } from "@/components/ui/Field";
-import { BOT_META } from "@/lib/telegram/bots";
 
 interface BotLink {
   bot: "employee" | "staff";
@@ -15,7 +14,7 @@ interface BotLink {
 interface Handshake {
   code: string;
   expiresAt: string;
-  links: BotLink[];
+  link: BotLink | null;
 }
 
 const POLL_MS = 2000;
@@ -183,24 +182,34 @@ export function TelegramLogin({ next }: { next: string }) {
 
       <div>
         <p className="text-[13px] text-ink-muted">
-          2. The button opens Telegram with the code already filled in.
+          2. The button opens Telegram with the code already filled in. Send it.
         </p>
-        <div className="mt-2 flex flex-col gap-2">
-          {handshake.links.map((link) => (
+        <div className="mt-2">
+          {handshake.link ? (
             <a
-              key={link.bot}
-              href={link.url}
+              href={handshake.link.url}
               target="_blank"
               rel="noreferrer"
-              className="btn-primary justify-center"
+              className="btn-primary w-full justify-center"
             >
               <ExternalLink className="h-4 w-4" aria-hidden="true" />
-              Open @{link.username}
-              <span className="opacity-70">· {BOT_META[link.bot].audience}</span>
+              Open @{handshake.link.username}
             </a>
-          ))}
+          ) : (
+            <Alert tone="warning">
+              No Telegram bot is configured on this deployment. Send the code with{" "}
+              <code>/login CODE</code> instead, or ask an admin to set the bot username.
+            </Alert>
+          )}
         </div>
       </div>
+
+      <p className="text-xs text-ink-subtle">
+        Only works if your Telegram is already linked to a helpdesk account — link it once under{
+        " "}
+        <span className="font-medium">Profile → Telegram</span> while signed in. The code is not tied
+        to a bot, so either bot can claim it.
+      </p>
 
       <div>
         {expired ? (

@@ -9,7 +9,7 @@ import {
   LOGIN_TTL_MS,
   generateBrowserToken,
   generateLoginCode,
-  loginBotLinks,
+  loginBotLink,
   normaliseCode,
 } from "@/lib/telegram/login";
 import { safeNextPath } from "@/lib/utils";
@@ -70,7 +70,7 @@ export async function POST(request: NextRequest) {
 
     const response = NextResponse.json({
       ok: true,
-      data: { code, expiresAt: expiresAt.toISOString(), links: loginBotLinks(code) },
+      data: { code, expiresAt: expiresAt.toISOString(), link: loginBotLink(code) },
     });
 
     response.cookies.set(BROWSER_COOKIE, browserToken, {

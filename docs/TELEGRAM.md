@@ -413,12 +413,26 @@ update tertunda langsung diproses.
 Kalau akun Telegram sudah terhubung, kata sandi tidak perlu diingat lagi.
 
 1. Buka `/auth/telegram` (atau tombol **Sign in with Telegram** di halaman login).
-2. Halaman menampilkan kode 8 karakter dan tombol ke tiap bot yang punya username.
+2. Halaman menampilkan kode 8 karakter dan **satu** tombol ke bot.
 3. Tombol itu membuka Telegram dengan kode sudah terisi — tekan **Start**.
 4. Tab browser lanjut sendiri dan masuk sebagai akun yang terhubung ke chat itu.
 
 Dari sisi bot, tombol itu mengirim `/start login_KODE`; mengetik
 `/login KODE` manual juga jalan. Kode hidup **10 menit** dan sekali pakai.
+
+**Satu tombol, bukan dua.** Kode tidak terikat ke bot mana pun —
+`redeem_web_login_code` hanya menerima `profile_id` — jadi halaman tidak perlu
+menanyakan bot mana yang kamu hubungkan, dan kamu tidak perlu mengingatnya.
+Halaman menunjuk bot karyawan karena bot itulah yang boleh dihubungkan semua
+role; bot tim IT hanya menerima staf. Kalau chat-nya ternyata cuma terhubung di
+bot tim IT, bot karyawan tetap bisa mengklaimnya: `profileForChatAcrossBots()`
+(`lib/telegram/session.ts`) mencari link di kedua bot, bot yang menerima pesan
+dicoba lebih dulu.
+
+Aturan audiens tetap milik bot yang **memegang** link-nya, bukan bot yang
+sekadar menerima pesan. Kalau tidak begitu, staf yang mengirim kode ke bot
+karyawan akan tampak seperti non-staf bagi bot tim IT dan chat-nya ter-unlink
+tanpa sebab.
 
 **Kenapa ini aman.** Kode bukan kredensial milik orang lain. Bot menyelesaikan
 pengirimnya lewat `telegram_links` lebih dulu, jadi kode hanya bisa mengikat
@@ -434,3 +448,10 @@ Kode disimpan di `web_login_codes`: tanpa policy, tanpa grant ke `anon` maupun
 
 Karyawan yang belum pernah menghubungkan Telegram tetap pakai email + kata
 sandi. Alur itu tidak berubah.
+
+Kalau chat-nya memang belum terhubung ke akun mana pun, kode itu tidak akan
+pernah bisa diklaim dan halamannya menunggu sampai kedaluwarsa. Karena itu
+halaman login menuliskan syaratnya di bawah tombol: hubungkan dulu lewat
+**Profil → Telegram** sambil sudah masuk, baru kode ini ada gunanya. Bot juga
+mengatakannya terus terang kalau ada yang mengirim kode dari chat yang belum
+terhubung.

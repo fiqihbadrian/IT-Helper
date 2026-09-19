@@ -63,17 +63,25 @@ export interface LoginBotLink {
 }
 
 /**
- * One deep link per bot, because a chat is linked per bot.
+ * The single bot the sign-in button points at.
  *
- * A staff member who only ever linked the staff bot would be stuck if the page
- * offered nothing but the employee bot, so the page shows whichever bots have a
- * username configured and lets the visitor pick the one they actually talk to.
+ * The code is not bound to a bot — `redeem_web_login_code` only ever learns the
+ * profile — so the page does not need to ask which bot the visitor linked.
+ * Offering both was a dead end: half the buttons silently did nothing, and the
+ * visitor had no way to tell which half. The bot resolves the chat across both,
+ * so one link is enough.
+ *
+ * The employee bot wins because it is the one every role may link; the staff bot
+ * only accepts IT staff. `BOT_KINDS` is ordered accordingly, and the loop falls
+ * through to the staff bot if a deployment configured nothing else.
  */
-export function loginBotLinks(code: string): LoginBotLink[] {
+export function loginBotLink(code: string): LoginBotLink | null {
   const payload = loginPayload(code);
 
-  return BOT_KINDS.flatMap((bot) => {
+  for (const bot of BOT_KINDS) {
     const username = telegramEnv.botUsername(bot);
-    return username ? [{ bot, username, url: `https://t.me/${username}?start=${payload}` }] : [];
-  });
+    if (username) return { bot, username, url: `https://t.me/${username}?start=${payload}` };
+  }
+
+  return null;
 }

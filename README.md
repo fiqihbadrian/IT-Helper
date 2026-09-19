@@ -95,6 +95,9 @@ credential for somebody else's account: the bot resolves the sender through
 thief in as themselves. It is single-use, expires in 10 minutes, and is bound to an
 HttpOnly cookie issued alongside it.
 
+Because the code is never bound to a bot, the page shows one button and does not ask
+which bot you linked — the bot that receives it resolves the chat across both.
+
 ### Cloudflare Workers, and one deliberate footgun avoided
 
 The whole thing ships as a single Worker. Two details are easy to get wrong and both

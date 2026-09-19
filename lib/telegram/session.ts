@@ -1,7 +1,7 @@
 import "server-only";
 
 import { asSystem } from "@/lib/db/pool";
-import type { BotKind } from "@/lib/telegram/bots";
+import { BOT_KINDS, type BotKind } from "@/lib/telegram/bots";
 import { telegramApi } from "@/lib/telegram/client";
 
 /**
@@ -174,6 +174,30 @@ export async function redeemLinkCode(bot: BotKind, code: string, chatId: number)
     );
     return rows[0] ?? null;
   });
+}
+
+/**
+ * Find the profile a chat is linked to, whichever bot holds the link.
+ *
+ * Used only by web sign-in, and only because the login page has no session and
+ * therefore cannot know which bot the visitor linked. A chat is one human, so
+ * the answer is the same person either way; asking them to remember which bot
+ * they linked is a trap that costs a query to avoid.
+ *
+ * The preferred bot is tried first so the common case is one lookup. If the same
+ * chat were ever linked to two different profiles, the preferred bot wins — a
+ * situation `create_telegram_link_code` makes hard to reach, since linking
+ * requires a code issued while already signed in as that profile.
+ */
+export async function profileForChatAcrossBots(chatId: number, preferred: BotKind) {
+  const order = [preferred, ...BOT_KINDS.filter((bot) => bot !== preferred)];
+
+  for (const bot of order) {
+    const profile = await profileForChat(bot, chatId);
+    if (profile) return { bot, profile };
+  }
+
+  return null;
 }
 
 /**
