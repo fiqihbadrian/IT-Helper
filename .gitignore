@@ -14,6 +14,10 @@ yarn-error.log*
 .env
 .env.local
 .env*.local
+
+# Account-specific. Copy `wrangler.jsonc.example` to `wrangler.jsonc` instead.
+wrangler.jsonc
+
 .vercel
 *.tsbuildinfo
 next-env.d.ts

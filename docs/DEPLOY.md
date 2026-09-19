@@ -127,8 +127,8 @@ NEXT_PUBLIC_TELEGRAM_STAFF_BOT_USERNAME
 
 ```text
 SUPABASE_SERVICE_ROLE_KEY
-BOT_TELE_KARYAWAN        # bot karyawan, @bian_it_bot
-BOT_TELE_ADMIN           # bot tim IT, @bian_itbot
+BOT_TELE_KARYAWAN        # bot karyawan
+BOT_TELE_ADMIN           # bot tim IT
 TELEGRAM_WEBHOOK_SECRET  # satu secret untuk kedua bot
 DISPATCH_SECRET
 ```
@@ -168,8 +168,8 @@ Webhook Telegram itu **per bot token, satu URL**. Cloudflare tidak tahu-menahu s
 Telegram, jadi setelah deploy kedua URL-nya harus didaftarkan sekali:
 
 ```bash
-npm run telegram:setup        https://it-helpdesk.fiqihbadrian.workers.dev
-npm run telegram:setup:staff  https://it-helpdesk.fiqihbadrian.workers.dev
+npm run telegram:setup        https://<worker>.<subdomain>.workers.dev
+npm run telegram:setup:staff  https://<worker>.<subdomain>.workers.dev
 
 npm run telegram:info
 npm run telegram:info:staff
@@ -195,7 +195,7 @@ Tiga hal yang mudah salah:
 
 ## Auto-deploy dari GitHub
 
-Repo `fiqihbadrian/IT-Helper` sudah terhubung ke Cloudflare, jadi bisa memakai
+Repo GitHub sudah terhubung ke Cloudflare, jadi bisa memakai
 **Workers Builds**: push ke `main` → build → deploy, tanpa `npm run cf:deploy`
 manual.
 

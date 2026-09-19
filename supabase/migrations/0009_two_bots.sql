@@ -9,8 +9,8 @@
 --
 -- This migration splits the surface in two:
 --
---   @bian_it_bot    "employee"  self-service only: report and follow a ticket
---   @bian_itbot     "staff"     the bench: queue, claim, close
+--   the employee bot  "employee"  self-service only: report and follow a ticket
+--   the staff bot     "staff"     the bench: queue, claim, close
 --
 -- The separation is real, not cosmetic:
 --
@@ -51,7 +51,7 @@ create index if not exists telegram_links_chat_idx
   on public.telegram_links (bot, chat_id);
 
 -- Backfill. Everything linked before this migration was talking to
--- @bian_it_bot, which is the employee bot now, so 'employee' is the honest
+-- the employee bot, which is the only one that existed then, so 'employee' is the honest
 -- answer — including for staff, whose old link was an employee-bot link whether
 -- or not they meant it that way. Staff have to link the staff bot deliberately.
 --

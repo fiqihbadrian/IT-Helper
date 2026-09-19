@@ -4,8 +4,8 @@ Ada **dua** bot, dan pemisahannya disengaja:
 
 | Bot | Untuk | Perintah | Webhook |
 | --- | --- | --- | --- |
-| **@bian_it_bot** | karyawan | 7 | `/api/telegram/webhook` |
-| **@bian_itbot** | tim IT | 13 | `/api/telegram/webhook/staff` |
+| **bot karyawan** | karyawan | 8 | `/api/telegram/webhook` |
+| **bot tim IT** | tim IT | 14 | `/api/telegram/webhook/staff` |
 
 Satu update tiket untuk pemohon dan satu update untuk bangku IT adalah dua
 notifikasi yang berbeda. Mengirim keduanya ke satu bot berarti antrean tiket
@@ -51,8 +51,8 @@ perubahan kode.
 2. Salin kedua token ke `.env.local`:
 
 ```bash
-BOT_TELE_KARYAWAN=123456:ABC...    # @bian_it_bot
-BOT_TELE_ADMIN=789012:DEF...       # @bian_itbot
+BOT_TELE_KARYAWAN=123456:ABC...    # bot karyawan
+BOT_TELE_ADMIN=789012:DEF...       # bot tim IT
 ```
 
 Nama panjang `TELEGRAM_EMPLOYEE_BOT_TOKEN` dan `TELEGRAM_STAFF_BOT_TOKEN` juga
@@ -63,8 +63,8 @@ soal bot mana yang mana.
 3. Opsional, agar halaman profil menampilkan tautan langsung:
 
 ```bash
-NEXT_PUBLIC_TELEGRAM_BOT_USERNAME=bian_it_bot
-NEXT_PUBLIC_TELEGRAM_STAFF_BOT_USERNAME=bian_itbot
+NEXT_PUBLIC_TELEGRAM_BOT_USERNAME=<bot_karyawan>
+NEXT_PUBLIC_TELEGRAM_STAFF_BOT_USERNAME=<bot_tim_it>
 ```
 
 ### 2. Secret

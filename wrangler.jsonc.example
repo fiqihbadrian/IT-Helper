@@ -1,0 +1,57 @@
+// Copy to `wrangler.jsonc` and fill in the four values marked TODO.
+//
+// It is not committed because it is the one file that ties this checkout to a
+// particular Cloudflare account and Supabase project. Nothing in it is a
+// secret — the NEXT_PUBLIC_* values ship to the browser anyway and the
+// Hyperdrive id is useless without account access — but a fresh clone should
+// not silently deploy into somebody else's project.
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "it-helpdesk", // TODO: must match the `services` binding below
+  "main": ".open-next/worker.js",
+  "compatibility_date": "2026-09-18",
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+
+  // Keep dashboard-managed variables and secrets from being wiped by a deploy.
+  "keep_vars": true,
+
+  // The Worker makes several sequential queries per request (ticket + its
+  // comments + its history + notifications). Smart Placement runs it next to
+  // the database instead of at the edge nearest the user, which is a win for
+  // everyone who is not sitting in the same region as Postgres.
+  "placement": { "mode": "smart" },
+
+  "assets": {
+    "directory": ".open-next/assets",
+    "binding": "ASSETS"
+  },
+
+  "services": [{ "binding": "WORKER_SELF_REFERENCE", "service": "it-helpdesk" }],
+
+  "images": { "binding": "IMAGES" },
+
+  "hyperdrive": [
+    {
+      "binding": "HYPERDRIVE",
+      // TODO: `npx wrangler hyperdrive create <name> --connection-string=... --caching-disabled`
+      // The `--caching-disabled` flag is not optional. See docs/DEPLOY.md.
+      "id": "<hyperdrive-id>"
+    }
+  ],
+
+  "observability": { "enabled": true },
+
+  // Public by design — these ship to the browser anyway, and OpenNext needs
+  // them on `process.env` at runtime, not just at build time. Everything that
+  // is actually secret (service-role key, bot token, webhook secret) lives in
+  // the dashboard, never here.
+  "vars": {
+    // TODO: your Supabase project
+    "NEXT_PUBLIC_SUPABASE_URL": "https://<project-ref>.supabase.co",
+    "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY": "sb_publishable_...",
+    "NEXT_PUBLIC_TICKET_BUCKET": "ticket-attachments",
+    // TODO: your bots, without the leading @
+    "NEXT_PUBLIC_TELEGRAM_BOT_USERNAME": "your_employee_bot",
+    "NEXT_PUBLIC_TELEGRAM_STAFF_BOT_USERNAME": "your_staff_bot"
+  }
+}

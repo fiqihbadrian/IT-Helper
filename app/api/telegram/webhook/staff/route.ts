@@ -4,7 +4,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 /**
- * Webhook for the staff bot (@bian_itbot).
+ * Webhook for the staff bot.
  *
  * A separate URL rather than a path segment on the shared one: the webhook
  * secret is the same for both, so the URL is the only thing telling the handler
