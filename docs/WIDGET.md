@@ -291,3 +291,14 @@ curl -s -H "Origin: https://example.com" -H "X-Widget-Key: wk_…" \
 
 Cek juga di **Admin → Channels**: jumlah tiket per channel, dan di
 **Tickets → All** tiket muncul dengan badge `via widget` dan nama pengunjung.
+
+`npm run verify` menutup bagian widget dengan 18 pemeriksaan di level basis
+data (tanpa perlu server jalan): profil mesin bisa dibuat, `source` dan
+`channel_id` harus sepakat, `notify()` melewati profil mesin, nama pengunjung
+muncul di `ticket_actor_name()`, RLS `ticket_contacts` dan `widget_sessions`,
+serta channel bertiket tidak bisa dihapus.
+
+Yang **belum** tercakup tes otomatis: empat server action di
+`app/actions/channels.ts`. Semuanya tipis — `assertAdmin()`, validasi zod, lalu
+query — dan sudah diverifikasi manual sekali (buat, ubah, matikan, hapus, plus
+penolakan hapus saat sudah ada tiket).
